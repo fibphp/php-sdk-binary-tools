@@ -33,11 +33,26 @@ class Package
 	{/*{{{*/
 		$this->filepath = $path . DIRECTORY_SEPARATOR . $this->name;
 
-		$cont = $this->fetcher->getByUri($this->getUri());
+        $preg = <<<'EOT'
+        \.tmp([\\\w]+\\packs\\)
+        EOT;
+        $preg = trim($preg);
 
-		$fd = fopen($this->filepath, "wb");
-		fwrite($fd, $cont);
-		fclose($fd);
+        $bakfile = preg_replace("/$preg/", ".tmp\\", $this->filepath);
+
+        $url = $this->getUri();
+        if(is_file($bakfile)){
+        	$_url = $this->fetcher->buildUri($url);
+            echo "\n use bak file {$bakfile} with: \n\t{$_url}\n";
+            copy($bakfile, $this->filepath);
+        } else {
+            $cont = $this->fetcher->getByUri($url);
+
+            $fd = fopen($this->filepath, "wb");
+            fwrite($fd, $cont);
+            fclose($fd);
+        }
+        
 	}/*}}}*/
 
 	public function unpack(string $path) : void
@@ -51,6 +66,18 @@ class Package
 
 	public function cleanup() : void
 	{/*{{{*/
+        $preg = <<<'EOT'
+        \.tmp([\\\w]+\\packs\\)
+        EOT;
+        $preg = trim($preg);
+
+        $bakfile = preg_replace("/$preg/", ".tmp\\", $this->filepath);
+
+        if(!is_file($bakfile)){
+            copy($this->filepath, $bakfile);
+            echo "\n try bak file to: \n\t{$bakfile}\n";
+        }
+
 		unlink($this->filepath);		
 	}/*}}}*/
 }

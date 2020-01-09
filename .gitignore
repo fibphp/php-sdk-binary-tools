@@ -24,3 +24,6 @@ pgo/work
 !pgo/tpl/php
 !lib/php/libsdk/SDK/Build/PGO/Server/PHP
 *.swp
+
+phpdev/vc15/x64/deps/
+phpdev/vc15/x64/php-src/
