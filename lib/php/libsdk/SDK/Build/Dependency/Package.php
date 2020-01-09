@@ -29,13 +29,20 @@ class Package
 		return "$base/{$branch_data['crt']}/$arch/{$this->name}";
 	}/*}}}*/
 
+    public function showUrl()
+    {
+        $url = $this->getUri();
+        $_url = $this->fetcher->buildUri($url);
+        return $_url;
+    }
+
 	public function retrieve(string $path) : void
 	{/*{{{*/
 		$this->filepath = $path . DIRECTORY_SEPARATOR . $this->name;
 
         $preg = <<<'EOT'
-        \.tmp([\\\w]+\\packs\\)
-        EOT;
+\.tmp([\\\w]+\\packs\\)
+EOT;
         $preg = trim($preg);
 
         $bakfile = preg_replace("/$preg/", ".tmp\\", $this->filepath);
@@ -43,7 +50,7 @@ class Package
         $url = $this->getUri();
         if(is_file($bakfile)){
         	$_url = $this->fetcher->buildUri($url);
-            echo "\n use bak file {$bakfile} with: \n\t{$_url}\n";
+            echo "\n use bak file {$bakfile} for: \n\t{$_url}\n";
             copy($bakfile, $this->filepath);
         } else {
             $cont = $this->fetcher->getByUri($url);
@@ -67,15 +74,15 @@ class Package
 	public function cleanup() : void
 	{/*{{{*/
         $preg = <<<'EOT'
-        \.tmp([\\\w]+\\packs\\)
-        EOT;
+\.tmp([\\\w]+\\packs\\)
+EOT;
         $preg = trim($preg);
 
         $bakfile = preg_replace("/$preg/", ".tmp\\", $this->filepath);
 
         if(!is_file($bakfile)){
             copy($this->filepath, $bakfile);
-            echo "\n try bak file to: \n\t{$bakfile}\n";
+            echo "\n copy bak file to: \n\t{$bakfile}\n";
         }
 
 		unlink($this->filepath);		
