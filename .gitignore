@@ -28,4 +28,6 @@ pgo/work
 phpdev/vc15/x64/deps/
 phpdev/vc15/x64/php-src/
 phpdev/vc15/x64/deps.*/
-phpdev/*
+phpdev/vc15/x64/*.7z
+phpdev/vc15/x64/*.zip
+phpdev/vc15/x64/*.tar
