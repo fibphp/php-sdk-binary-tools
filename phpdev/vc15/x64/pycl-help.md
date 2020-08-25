@@ -1,9 +1,11 @@
 # 基础步骤
 
+- cd D:\php_sdk\phpdev\vc15\x64\php-src
+
 - phpsdk_buildtree phpdev
 - phpsdk_deps --update
 - buildconf
-- configure --disable-all --enable-cli –disable-zts
+- configure --disable-all --enable-cli --disable-zts
 - nmake
 
 # 编译参数
@@ -15,6 +17,10 @@ configure --disable-all --with-ffi --with-openssl --enable-mbstring --with-zlib 
 # 自定义生成
 
 configure --disable-all --with-ffi --with-openssl --enable-mbstring --with-zlib --enable-cli --disable-zts
+
+configure --disable-all --enable-cli --enable-zts
+
+nmake clean
 
 nmake
 

@@ -2,24 +2,30 @@
 import re
 import os
 import sys
+import json
 
-__all__ = [
-    'Error',
-    'NotMatchError',
-    'ListNotMatchError',
-    'letx',
-    'base_list',
-    'base_reg',
-    'base_join',
-    'ftoken',
-    'fstr'
-]
+def read_lines(f):
+    with open(f, 'r') as rf:
+        return rf.readlines()
 
-def GBK(s):
-    try:
-        return s.decode('utf-8').encode('gbk')
-    except UnicodeDecodeError as ex:
-        return repr(s)
+def dump_json(f, obj):
+    with open(f, 'w') as wf:
+        json.dump(obj, wf, indent = 2)
+
+def load_json(f):
+    with open(f, 'r') as rf:
+        return json.load(rf)
+
+def _LOG(msg, handle=None):
+    print msg
+    if handle:
+        handle.write(msg+'\n')
+        handle.flush()
+
+
+#===============================================================
+#========================== LETX ERROR ==========================
+#===============================================================
 
 class Error(Exception):
     pass
@@ -43,7 +49,7 @@ class ListNotMatchError(NotMatchError):
 
 
 #===============================================================
-#========================== MAIN LETX ==========================
+#========================== LETX MAIN ==========================
 #===============================================================
 
 def letx(_sdic, mtag = '_'):
@@ -177,9 +183,17 @@ def _SPLIT_REG(s, sa='<', sb='>'):
 
     return tuple([i.strip() for i in ret if i.strip()])
 
+def GBK(s):
+    try:
+        return s.decode('utf-8').encode('gbk')
+    except UnicodeDecodeError as ex:
+        return repr(s)
+
+
 #===============================================================
 #========================= MATCH FUNC ==========================
 #===============================================================
+
 class _base(object):
     TestFalse = object()
     debug = False
@@ -270,8 +284,6 @@ class base_reg(_base):
 
             if index >= sl:
                 break
-            if index >= 266:
-                pass
 
             f_len = len(item)
             if f_len==1:
@@ -457,56 +469,35 @@ class base_lines(_base):
 #========================== TEST FUNC ==========================
 #===============================================================
 
-README = u"""
-语法描述为
-{<tag>:([tag_item1, tag_item2,...], pkg=lambda x:...)} 依次尝试tag_item,然后pkg结果，tag_item只有一个时，可简写 {<tag>:(tag_item, pkg)}
-example
-dict{
-    <_>: ##  main_tag为<_>, tag中不允许有`.`
-        ( [{<tag1>: (sub_tag_items, lambda x:...)}, ## 每一个tag 都为全局变量 find_tag('<tag'>') 可获取此tag的解析函数
-           {<tag2>: ({>func<:agrs}, lambda x:...)}, ## 表示调用函数`func`获取结果
-           {<tag3>: (agrs, lambda x:...)}, ## func为base_func时可以直接写参数 等同于{<tag3>: ({><:agrs}, lambda x:...)}
-           {>func<:agrs}, ## tag可以匿名(补全为上级tag_index_)，等同于{<上级tag_index_>: ({>func<:agrs}, lambda x:x)}
-           (agrs), ## 等同于 {<上级tag.index>: ({><:agrs}, lambda x:x)}
-           callable_obj, ## callable_obj 参数为(_index当前索引, s原字符串, sl原字符串长度)的可调用对象，匹配则返回结果为 (index下一个带解析处索引,ret获取到的结果)，不匹配raise NotMatchError
-            ],
-          pkg lambda x:...`) ## 处理tag返回结果的函数
-    ><:base_func, ##  base_func为><
-    >func<:func, ## func 接受两个参数 (args,find_tag)；返回参数为(_index当前索引, s原字符串, sl原字符串长度)的可调用对象，匹配则返回结果为 (index下一个带解析处索引,ret获取到的结果)，不匹配raise NotMatchError
-}
-"""
+def all_test(test_pre='_test'):
+    globals_dict = globals()
+    for k, v in globals_dict.items():
+        if k.startswith(test_pre):
+            _LOG("\n\n>>%s" % (k,))
+            if hasattr(v, '__call__'):
+                v()
 
-sdic_cl = {
-    '<_>':([
-            {'<exe>':("<str|token_p>", lambda x: x[0]) },
-            {'<define>':(["<`/|-`>D<token_k>=<token_k>", "<`/|-`>D<token_k>"], lambda x: {'define': x}) },
-            {'<include>':("<`/|-`>I<str|token_p>", lambda x: {'include': x[0]}) },
-            {'<flag>':("<`/|-`><str|token_k>", lambda x: {'flag': x[0]}) },
-            {'<zc>':("<`/|-`>Zc:<str|token_k>", lambda x: {'zc': x[0]}) },
-            {'<warn>':("<`/|-`>w</[deo1-4]{1}/><str|token_k>", lambda x: {'warn': x}) },
-            {'<file>':("<`/|-`>F</[admpRAeori]{1}/><str|token_p>", lambda x: {'file': x}) },
-            {'<arg>':("<define|include|file|zc|warn|flag>", lambda x: x[0]) },
-            {'<str>':([fstr('"'), fstr("'")], lambda x: x) },
-            {'<token_k>':(r"</[\w]+/>", lambda x: x[0])},
-            {'<token_p>':(r"</[:.\/\w\\-]+/>", lambda x: x[0])},
-            {'<option>':({'>s_lines<':("<>", "<arg>")}, lambda x: {'option': [i[0] for i in x]})},
-            {'<input>':({'>s_lines<':("<>", "<str|token_p>")}, lambda x: {'input': [i[0] for i in x]})},
-            {'<cl>':("<exe><option><input>", lambda x: x)}
-        ], lambda x: x),
-    '><':base_reg,
-    '>s_lines<':base_lines, }
+def _unittest(func, *cases):
+    return [_functest(func, *case) for case in cases]
 
-clload = lambda s: letx(sdic_cl, 'cl')(0, s, len(s))[1]
+def _functest(func, isPass, *args, **kws):
+    result = None
+    try:
+        _LOG('\n%s -> %s' %(isPass, func.func_name))
+        result = func(*args, **kws)
+        _LOG('=%s' %(json.dumps(result, indent = 2), ))
+    except Error as ex:
+        _LOG("%s -> %s:%s" %(isPass, type(ex), ex))
+        if isPass:
+            raise ex
+    else:
+        if not isPass:
+            raise AssertionError("isPass:%s but no Exception!!!"%(isPass))
+    return result
 
-
-#===========TEST==========
-
-
-def _LOG(msg, handle=None):
-    print msg
-    if handle:
-        handle.write(msg+'\n')
-        handle.flush()
+#===============================================================
+#========================== clbuild HELP ==========================
+#===============================================================
 
 def parse_cl(cmds):
     rets = []
@@ -549,18 +540,9 @@ def fix_cl(ret, LIST_KEYS = ['include', 'zc', 'flag'], MAP_KEYS = {'define': lam
 
     return obj
 
-def _test2():
-    t0 = r'''
-	type ext\pcre\php_pcre.def > D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php7.dll.def
-	"cl.exe" /I "D:\php_sdk\phpdev\vc15\x64\deps\include" /DHAVE_OPENSSL_SSL_H=1 /D COMPILE_DL_OPENSSL /D OPENSSL_EXPORTS=1 /nologo /I . /I main /I Zend /I TSRM /I ext /D _WINDOWS /D WINDOWS=1 /D ZEND_WIN32=1 /D PHP_WIN32=1 /D WIN32 /D _MBCS /W3 /D _USE_MATH_DEFINES /FD /wd4996 /Zc:inline /Zc:__cplusplus /d2FuncCache1 /Zc:wchar_t /MP /LD /MD /W3 /Ox /D NDebug /D NDEBUG /D ZEND_WIN32_FORCE_INLINE /GF /D ZEND_DEBUG=0 /I "D:\php_sdk\phpdev\vc15\x64\deps\include" /D FD_SETSIZE=256 /FoD:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\ext\openssl\ /FpD:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\ext\openssl\ /FRD:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\ext\openssl\ /FdD:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\ext\openssl\ /c ext\openssl\openssl.c ext\openssl\xp_ssl.c
-	rc /nologo  /I . /I main /I Zend /I TSRM /I ext /n /fo D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe.res /d WANT_LOGO  /d FILE_DESCRIPTION="\"CLI\"" /d FILE_NAME="\"php.exe\"" /d URL="\"http://www.php.net\"" /d INTERNAL_NAME="\"CLI SAPI\"" /d THANKS_GUYS="\"Thanks to Edin Kadribasic, Marcus Boerger, Johannes Schlueter, Moriyoshi Koizumi, Xinchen Hui\"" win32\build\template.rc
-	copy D:\php_sdk\phpdev\vc15\x64\php-src\win32\build\default.manifest D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe.manifest >nul
-	"link.exe" /nologo  @"D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\resp\CLI_GLOBAL_OBJS.txt" D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php7.lib ws2_32.lib shell32.lib edit_a.lib D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe.res /out:D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe /nologo /libpath:"D:\php_sdk\phpdev\vc15\x64\deps\lib" /stack:67108864 /libpath:"..\deps\lib"
-	if exist D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe.manifest "D:\Windows Kits\10\bin\10.0.19041.0\x64\mt.exe" -nologo -manifest D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe.manifest -outputresource:D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe;1
-	echo SAPI sapi\cli build complete
-
-'''
-    _unittest(parse_cl, (True, t0))
+#===============================================================
+#========================== clbuild FUNC ==========================
+#===============================================================
 
 def clbuild(test_a = 0, test_s = 0):
     if test_a:
@@ -689,62 +671,203 @@ def do_clean_pp(f, outf):
 
     print "done:", outf, include
 
-def read_lines(f):
-    with open(f, 'r') as rf:
-        return rf.readlines()
+#===============================================================
+#========================== CL LETX  ==========================
+#===============================================================
 
-def all_test(test_pre='_test'):
-    globals_dict = globals()
-    for k, v in globals_dict.items():
-        if k.startswith(test_pre):
-            _LOG("\n\n>>%s" % (k,))
-            if hasattr(v, '__call__'):
-                v()
+sdic_cl = {
+    '<_>':([
+            {'<exe>':("<str|token_p>", lambda x: x[0]) },
+            {'<define>':(["<`/|-`>D<token_k>=<token_k>", "<`/|-`>D<token_k>"], lambda x: {'define': x}) },
+            {'<include>':("<`/|-`>I<str|token_p>", lambda x: {'include': x[0]}) },
+            {'<flag>':("<`/|-`><str|token_k>", lambda x: {'flag': x[0]}) },
+            {'<zc>':("<`/|-`>Zc:<str|token_k>", lambda x: {'zc': x[0]}) },
+            {'<warn>':("<`/|-`>w</[deo1-4]{1}/><str|token_k>", lambda x: {'warn': x}) },
+            {'<file>':("<`/|-`>F</[admpRAeori]{1}/><str|token_p>", lambda x: {'file': x}) },
+            {'<arg>':("<define|include|file|zc|warn|flag>", lambda x: x[0]) },
+            {'<str>':([fstr('"'), fstr("'")], lambda x: x) },
+            {'<token_k>':(r"</[\w]+/>", lambda x: x[0])},
+            {'<token_p>':(r"</[:.\/\w\\-]+/>", lambda x: x[0])},
+            {'<option>':({'>s_lines<':("<>", "<arg>")}, lambda x: {'option': [i[0] for i in x]})},
+            {'<input>':({'>s_lines<':("<>", "<str|token_p>")}, lambda x: {'input': [i[0] for i in x]})},
+            {'<cl>':("<exe><option><input>", lambda x: x)}
+        ], lambda x: x),
+    '><':base_reg,
+    '>s_lines<':base_lines, }
 
-def _unittest(func, *cases):
-    return [_functest(func, *case) for case in cases]
+clload = lambda s: letx(sdic_cl, 'cl')(0, s, len(s))[1]
 
-def _functest(func, isPass, *args, **kws):
-    result = None
-    try:
-        _LOG('\n%s -> %s' %(isPass, func.func_name))
-        result = func(*args, **kws)
-        import json
-        _LOG('=%s' %(json.dumps(result, indent = 2), ))
-    except Error as ex:
-        _LOG("%s -> %s:%s" %(isPass, type(ex), ex))
-        if isPass:
-            raise ex
-    else:
-        if not isPass:
-            raise AssertionError("isPass:%s but no Exception!!!"%(isPass))
-    return result
 
-def dump_json(f, obj):
-    import json
-    with open(f, 'w') as wf:
-        json.dump(obj, wf, indent = 2)
+def __test_clload():
+    t0 = r'''
+	type ext\pcre\php_pcre.def > D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php7.dll.def
+	"cl.exe" /I "D:\php_sdk\phpdev\vc15\x64\deps\include" /DHAVE_OPENSSL_SSL_H=1 /D COMPILE_DL_OPENSSL /D OPENSSL_EXPORTS=1 /nologo /I . /I main /I Zend /I TSRM /I ext /D _WINDOWS /D WINDOWS=1 /D ZEND_WIN32=1 /D PHP_WIN32=1 /D WIN32 /D _MBCS /W3 /D _USE_MATH_DEFINES /FD /wd4996 /Zc:inline /Zc:__cplusplus /d2FuncCache1 /Zc:wchar_t /MP /LD /MD /W3 /Ox /D NDebug /D NDEBUG /D ZEND_WIN32_FORCE_INLINE /GF /D ZEND_DEBUG=0 /I "D:\php_sdk\phpdev\vc15\x64\deps\include" /D FD_SETSIZE=256 /FoD:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\ext\openssl\ /FpD:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\ext\openssl\ /FRD:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\ext\openssl\ /FdD:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\ext\openssl\ /c ext\openssl\openssl.c ext\openssl\xp_ssl.c
+	rc /nologo  /I . /I main /I Zend /I TSRM /I ext /n /fo D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe.res /d WANT_LOGO  /d FILE_DESCRIPTION="\"CLI\"" /d FILE_NAME="\"php.exe\"" /d URL="\"http://www.php.net\"" /d INTERNAL_NAME="\"CLI SAPI\"" /d THANKS_GUYS="\"Thanks to Edin Kadribasic, Marcus Boerger, Johannes Schlueter, Moriyoshi Koizumi, Xinchen Hui\"" win32\build\template.rc
+	copy D:\php_sdk\phpdev\vc15\x64\php-src\win32\build\default.manifest D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe.manifest >nul
+	"link.exe" /nologo  @"D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\resp\CLI_GLOBAL_OBJS.txt" D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php7.lib ws2_32.lib shell32.lib edit_a.lib D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe.res /out:D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe /nologo /libpath:"D:\php_sdk\phpdev\vc15\x64\deps\lib" /stack:67108864 /libpath:"..\deps\lib"
+	if exist D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe.manifest "D:\Windows Kits\10\bin\10.0.19041.0\x64\mt.exe" -nologo -manifest D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe.manifest -outputresource:D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php.exe;1
+	echo SAPI sapi\cli build complete
 
-def load_json(f):
-    import json
-    with open(f, 'r') as rf:
-        return json.load(rf)
+'''
+    _unittest(parse_cl, (True, t0))
 
-def main():
-    cmd = sys.argv[1] if len(sys.argv) >= 2 else ''
+#===============================================================
+#========================== ASM LETX  ==========================
+#===============================================================
+
+README = u"""
+语法描述为
+{<tag>:([tag_item1, tag_item2,...], pkg=lambda x:...)} 依次尝试tag_item,然后pkg结果，tag_item只有一个时，可简写 {<tag>:(tag_item, pkg)}
+example
+dict{
+    <_>: ##  main_tag为<_>, tag中不允许有`.`
+        ( [{<tag1>: (sub_tag_items, lambda x:...)}, ## 每一个tag 都为全局变量 find_tag('<tag'>') 可获取此tag的解析函数
+           {<tag2>: ({>func<:agrs}, lambda x:...)}, ## 表示调用函数`func`获取结果
+           {<tag3>: (agrs, lambda x:...)}, ## func为base_func时可以直接写参数 等同于{<tag3>: ({><:agrs}, lambda x:...)}
+           {>func<:agrs}, ## tag可以匿名(补全为上级tag_index_)，等同于{<上级tag_index_>: ({>func<:agrs}, lambda x:x)}
+           (agrs), ## 等同于 {<上级tag.index>: ({><:agrs}, lambda x:x)}
+           callable_obj, ## callable_obj 参数为(_index当前索引, s原字符串, sl原字符串长度)的可调用对象，匹配则返回结果为 (index下一个带解析处索引,ret获取到的结果)，不匹配raise NotMatchError
+            ],
+          pkg lambda x:...`) ## 处理tag返回结果的函数
+    ><:base_func, ##  base_func为><
+    >func<:func, ## func 接受两个参数 (args,find_tag)；返回参数为(_index当前索引, s原字符串, sl原字符串长度)的可调用对象，匹配则返回结果为 (index下一个带解析处索引,ret获取到的结果)，不匹配raise NotMatchError
+}
+"""
+
+sdic_asm = {
+    '<_>':([
+
+        ], lambda x: x),
+    '><':base_reg,
+    '>s_lines<':base_lines, }
+
+asmload = lambda s: letx(sdic_asm, 'asm')(0, s, len(s))[1]
+
+def parse_asm(asm_str):
+    pass
+
+def _test_asm():
+    t0 = '''
+; Listing generated by Microsoft (R) Optimizing Compiler Version 19.16.27041.0 
+
+include listing.inc
+
+INCLUDELIB MSVCRT
+INCLUDELIB OLDNAMES
+
+PUBLIC	php_strlcpy
+; Function compile flags: /Ogtpy
+; File d:\php_sdk\phpdev\vc15\x64\php-src\main\strlcpy.cipp
+_TEXT	SEGMENT
+dst$ = 8
+src$ = 16
+siz$ = 24
+php_strlcpy PROC
+
+; 50994: const char *s = src;
+
+	mov	r9, rdx
+
+; 50995: size_t n = siz;
+; 50996: if (n != 0) {
+
+	test	r8, r8
+	je	SHORT $LL4@php_strlcp
+
+; 50997: while (--n != 0) {
+
+	sub	r8, 1
+	je	SHORT $LN20@php_strlcp
+	npad	2
+$LL2@php_strlcp:
+
+; 50998: if ((*dst++ = *src++) == 0)
+
+	movzx	eax, BYTE PTR [rdx]
+	inc	rdx
+	mov	BYTE PTR [rcx], al
+	inc	rcx
+	test	al, al
+	je	SHORT $LN13@php_strlcp
+
+; 50997: while (--n != 0) {
+
+	sub	r8, 1
+	jne	SHORT $LL2@php_strlcp
+
+; 50999: break;
+; 51000: }
+; 51001: }
+; 51002: if (n == 0) {
+
+	jmp	SHORT $LN20@php_strlcp
+$LN13@php_strlcp:
+	test	r8, r8
+	jne	SHORT $LN5@php_strlcp
+$LN20@php_strlcp:
+
+; 51003: if (siz != 0)
+; 51004: *dst = '\0';
+
+	mov	BYTE PTR [rcx], 0
+	npad	1
+$LL4@php_strlcp:
+
+; 51005: while (*src++)
+
+	movzx	eax, BYTE PTR [rdx]
+	inc	rdx
+	test	al, al
+	jne	SHORT $LL4@php_strlcp
+$LN5@php_strlcp:
+
+; 51006: ;
+; 51007: }
+; 51008: return((uintptr_t)src - (uintptr_t)s - 1);
+
+	sub	rdx, r9
+	lea	rax, QWORD PTR [rdx-1]
+
+; 51009: }
+
+	ret	0
+php_strlcpy ENDP
+_TEXT	ENDS
+END
+
+'''
+    _unittest(parse_asm, (True, t0))
+
+
+#===============================================================
+#========================== c2goasm FUNC ==========================
+#===============================================================
+
+def c2goasm(out_dir):
+    pass
+    
+
+def main(default_cmd = 'all_test', default_in = './php-src', default_out = './go-asm'):
+    cmd = sys.argv[1] if len(sys.argv) >= 2 else default_cmd
+    in_dir = sys.argv[2] if len(sys.argv) >= 3 else default_in
+    out_dir = sys.argv[3] if len(sys.argv) >= 4 else default_out
+    
     if cmd == 'all_test':
         all_test()
     elif cmd == 'clbuild':
         clbuild()
     elif cmd == 'clean_pp':
         clean_pp()
+    elif cmd == 'c2goasm':
+        c2goasm(args1)
     else:
         print '''
-useage `python pycl.py clbuild`
+useage ` python pycl.py all_test | clbuild | clean_pp | c2goasm [in_dir] [out_dir]`
 
 '''
 
         
 if __name__ == '__main__':
+    _LOG("\n==========START===========")
     main()
     _LOG("\n==========END===========")
