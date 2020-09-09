@@ -95,6 +95,8 @@ class _base(_base_log):
         return 'callable letx %s:%s' % (
             str(self.__class__).split("'")[1].replace('__main__.', ''), getattr(self, '__tag__', 'unknown'))
 
+BY_ORDER = 1
+MAX_INDEX = 2
 
 class LetxBuild(_base_log):
     def __init__(self, _sdic, mtag='_'):
@@ -130,6 +132,7 @@ class LetxBuild(_base_log):
         self._stack = []
         self._env = pre_env(tag_dict)
         self._parse = self.comp_letx(tag_dict, func_dict)
+        self.base_list_mode = BY_ORDER
         assert hasattr(self._parse, '__call__'), 'comp_letx self._parse must callable.'
 
     def parse(self, str_in):
@@ -311,16 +314,34 @@ class base_list(_base):
     def __call__(self, index, s, sl):
         _, index = super(self.__class__, self).__call__(index, s, sl)
 
-        ex_list = []
-        for _, func in enumerate(self.func_list):
-            try:
-                index, ret = func(index, s, sl)
-                return index, ret
-            except NotMatchError as ex:
+        if getattr(self.letx, 'base_list_mode', BY_ORDER) == MAX_INDEX:
+            ex_list = []
+            ret_list = []
+            for _, func in enumerate(self.func_list):
+                try:
+                    idx, ret = func(index, s, sl)
+                    ret_list.append((idx, ret))
+                except NotMatchError as ex:
+                    ex_list.append(ex)
 
-                ex_list.append(ex)
-        msg = '%s cannot match @%s<`...%s...`>.' % (str(self), index, SUB(s, index))
-        raise ListNotMatchError(index, msg, self.tag_list, ex_list, self)
+            max_idx = max([i for i, _ in ret_list]) if ret_list else 0
+            for idx, ret in ret_list:
+                if max_idx == idx:
+                    return idx, ret
+
+            msg = '%s cannot match @%s<`...%s...`>.' % (str(self), index, SUB(s, index))
+            raise ListNotMatchError(index, msg, self.tag_list, ex_list, self)
+        else:
+            ex_list = []
+            for _, func in enumerate(self.func_list):
+                try:
+                    index, ret = func(index, s, sl)
+                    return index, ret
+                except NotMatchError as ex:
+                    ex_list.append(ex)
+
+            msg = '%s cannot match @%s<`...%s...`>.' % (str(self), index, SUB(s, index))
+            raise ListNotMatchError(index, msg, self.tag_list, ex_list, self)
 
 
 class base_reg(_base):
@@ -440,7 +461,9 @@ class base_join(_base):
 
         index, is_end = end.test(index, s, sl)
         while T(is_end):
+            self.letx.base_list_mode = MAX_INDEX
             index, tmp = match(index, s, sl)
+            self.letx.base_list_mode = BY_ORDER
             get_msg('match', match, tmp)
 
             ret.append(tmp)
