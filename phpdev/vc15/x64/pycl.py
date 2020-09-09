@@ -275,7 +275,7 @@ def build_pkg_map(MAX_N=9, F_MAP=(('', lambda x: x), ('^int', int), ('^long', lo
             ext_map[expr] = lambda tag, idx=None, f=None, _func=func: _func(tag, idx, f)
 
     for expr, func in base_map.items():
-        ext_map[expr] = lambda tag: func
+        ext_map[expr] = lambda tag, _func=func: _func
     return ext_map
 
 
