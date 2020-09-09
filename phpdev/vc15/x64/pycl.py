@@ -41,6 +41,8 @@ class NotMatchError(Error):
         self._letx = obj
         self.index = index
 
+    def __str__(self):
+        return '%s' % (self.message, )
 
 class ListNotMatchError(NotMatchError):
     def __init__(self, index, msg, tag_list, ex_list, obj=None):
@@ -59,8 +61,42 @@ class ListNotMatchError(NotMatchError):
 # ========================== LETX MAIN ==========================
 # ===============================================================
 
-class LetxBuild(object):
+class _base_log(object):
+    debug = True
 
+    def log(self, msg, handle=None):
+        if self.debug and msg:
+            _msg = msg.replace("\n", r"\n")
+            print _msg
+            if handle:
+                handle.write(_msg + '\n')
+                handle.flush()
+
+
+class _base(_base_log):
+    TestFalse = object()
+
+    def test(self, index, s, sl):
+        try:
+            index, val = self.__call__(index, s, sl)
+            return index, val
+        except NotMatchError as ex:
+            _ = '%s test NotMatchError:%r @%d<`...%s...`>' % (self, ex, index, SUB(s, index))
+            return index, self.TestFalse
+
+    def __call__(self, index, s, sl):
+        assert index < sl, 'base index:%s out of max_len:%s.' % (index, sl)
+        return None, index
+
+    def __repr__(self):
+        return '<%s at 0x%08x>' % (str(self), id(self))
+
+    def __str__(self):
+        return 'callable letx %s:%s' % (
+            str(self.__class__).split("'")[1].replace('__main__.', ''), getattr(self, '__tag__', 'unknown'))
+
+
+class LetxBuild(_base_log):
     def __init__(self, _sdic, mtag='_'):
         assert '<_>' in _sdic and isinstance(_sdic['<_>'], tuple) and \
                len(_sdic['<_>']) == 2 and isinstance(_sdic['<_>'][0], list) and \
@@ -91,6 +127,7 @@ class LetxBuild(object):
         func_dict = {k: v for k, v in _sdic.items() if IS_FUN(k)}
 
         self.mtag = mtag
+        self._stack = []
         self._env = pre_env(tag_dict)
         self._parse = self.comp_letx(tag_dict, func_dict)
         assert hasattr(self._parse, '__call__'), 'comp_letx self._parse must callable.'
@@ -260,39 +297,6 @@ def ftoken(END, PRE=None, SKIP=None):
 
     return _ftoken
 
-
-class _base(object):
-    TestFalse = object()
-    debug = False
-
-    def test(self, index, s, sl):
-        try:
-            index, val = self.__call__(index, s, sl)
-            return index, val
-        except NotMatchError as ex:
-            _ = '%s test NotMatchError:%r @%d<`...%s...`>' % (self, ex, index, SUB(s, index))
-            return index, self.TestFalse
-
-    def log(self, msg, handle=None):
-        if self.debug and msg:
-            _msg = msg.replace("\n", r"\n")
-            print _msg
-            if handle:
-                handle.write(_msg + '\n')
-                handle.flush()
-
-    def __call__(self, index, s, sl):
-        assert index < sl, 'base index:%s out of max_len:%s.' % (index, sl)
-        return None, index
-
-    def __repr__(self):
-        return '<%s at 0x%08x>' % (str(self), id(self))
-
-    def __str__(self):
-        return 'callable letx %s:%s' % (
-            str(self.__class__).split("'")[1].replace('__main__.', ''), getattr(self, '__tag__', 'unknown'))
-
-
 class base_list(_base):
     def __init__(self, args_tuple, letx):
         main_tag, tag_list = args_tuple
@@ -313,6 +317,7 @@ class base_list(_base):
                 index, ret = func(index, s, sl)
                 return index, ret
             except NotMatchError as ex:
+
                 ex_list.append(ex)
         msg = '%s cannot match @%s<`...%s...`>.' % (str(self), index, SUB(s, index))
         raise ListNotMatchError(index, msg, self.tag_list, ex_list, self)
@@ -423,8 +428,8 @@ class base_join(_base):
         b2s = lambda t: '>>>%s<<<' % (t,) if not T(t) else 'not'
 
         def get_msg(tag, item, t):
-            _msg = 'base_join %s `%s` %s math @%s<`...%s...`>.' % (tag, str(item), b2s(t), index, SUB(s, index))
-            self.log(_msg) if not T(t) else None
+            _msg = 'base_join %s `%s` %s match @%s<`...%s...`>.' % (tag, str(item), b2s(t), index, SUB(s, index))
+            self.log(_msg)
             return _msg
 
         ret = []
@@ -436,9 +441,7 @@ class base_join(_base):
         index, is_end = end.test(index, s, sl)
         while T(is_end):
             index, tmp = match(index, s, sl)
-            msg = get_msg('match', match, tmp)
-            if T(tmp):
-                raise NotMatchError(index, msg, self)
+            get_msg('match', match, tmp)
 
             ret.append(tmp)
             index, is_split = split.test(index, s, sl)
@@ -475,7 +478,7 @@ class base_lines(_base):
         def get_msg(tag, item, t):
             _msg = 'base_lines %s `%s` %s math @%s<`...%s...`>.' % (
                 tag, GBK(str(item)), b2s(t), index, GBK(SUB(s, index)))
-            self.log(_msg) if not F(t) else None
+            self.log(_msg)
             return _msg
 
         ret = []
@@ -509,7 +512,7 @@ class base_lines(_base):
 # ========================== TEST FUNC ==========================
 # ===============================================================
 
-def all_test(test_pre='_test'):
+def all_test(test_pre='_test3'):
     globals_dict = globals()
     for k, v in globals_dict.items():
         if k.startswith(test_pre):
@@ -802,7 +805,7 @@ def _test3():
     t2 = "    [4.   5,    [    ],   {'a'   : 'b',    }   ]"
     t3 = "   ['fgh',7656,None,  True,False  ,123,   7472,[]  ,{},]  "
     _unittest(load, (True, t2))
-    _unittest(load, (True, t0), (True, t1), (True, t2), (True, t3))
+    #_unittest(load, (True, t0), (True, t1), (True, t2), (True, t3))
 
 
 # ===============================================================
