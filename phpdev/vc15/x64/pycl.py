@@ -42,7 +42,8 @@ class NotMatchError(Error):
         self.index = index
 
     def __str__(self):
-        return '%s' % (self.message, )
+        return '%s' % (self.message,)
+
 
 class ListNotMatchError(NotMatchError):
     def __init__(self, index, msg, tag_list, ex_list, obj=None):
@@ -54,15 +55,15 @@ class ListNotMatchError(NotMatchError):
 
     def __str__(self):
         return '%s >>>>\n %s' % (
-        self.message, '\n'.join(['\t<%s> :%s' % (key, item) for (key, item) in self._ex.items()]))
+            self.message, '\n'.join(['\t<%s> :%s' % (key, item) for (key, item) in self._ex.items()]))
 
 
 # ===============================================================
 # ========================== LETX MAIN ==========================
 # ===============================================================
 
-class _base_log(object):
-    debug = True
+class _log(object):
+    debug = False
 
     def log(self, msg, handle=None):
         if self.debug and msg:
@@ -73,7 +74,7 @@ class _base_log(object):
                 handle.flush()
 
 
-class _base(_base_log):
+class _base(_log):
     TestFalse = object()
 
     def test(self, index, s, sl):
@@ -95,43 +96,61 @@ class _base(_base_log):
         return 'callable letx %s:%s' % (
             str(self.__class__).split("'")[1].replace('__main__.', ''), getattr(self, '__tag__', 'unknown'))
 
+
 BY_ORDER = 1
 MAX_INDEX = 2
 
-class LetxBuild(_base_log):
-    def __init__(self, _sdic, mtag='_'):
-        assert '<_>' in _sdic and isinstance(_sdic['<_>'], tuple) and \
-               len(_sdic['<_>']) == 2 and isinstance(_sdic['<_>'][0], list) and \
-               hasattr(_sdic['<_>'][1], '__call__'), \
-            'input:%s must as {"<_>":([...], lambda x: x)}.' % (_sdic,)
 
-        def pre_env(s, fix=''):
+class LetxBuild(_log):
+    def __init__(self, _sdic, mtag='_'):
+        assert isinstance(_sdic, dict) and '<_>' in _sdic and isinstance(_sdic['<_>'], list), \
+            'input:%s must as {"<_>": [...]}.' % (_sdic,)
+
+        PKG_MAP = build_pkg_map()
+
+        def pre_pkg(tag, pkg_tag, pkg_dict):
+            pkg_tag = pkg_tag.strip()
+            if pkg_tag in PKG_MAP:
+                return PKG_MAP[pkg_tag](tag)
+            if pkg_tag in pkg_dict:
+                return pkg_dict[pkg_tag]
+            if tag in pkg_dict:
+                return pkg_dict[tag]
+            return DEFAULT_PKG
+
+        def pre_env(s, pkg_dict, fix=''):
             def setkey(_env, key, val=None):
                 assert key not in _env, 'mutil tag in key:%s' % (key,)
                 _env[key] = val
 
             env = {}
             if isinstance(s, dict) and len(s) == 1:
-                k, ut = s.items()[0]
+                k, v = s.items()[0]
+                arr = k.split('#', 1)
+                k = arr[0]
                 if IS_TAG(k):
-                    v, _ = ut
+                    pkg_tag = arr[1] if len(arr) == 2 else ''
+                    tag = k[1:-1]
+                    pkg = pre_pkg(tag, pkg_tag, pkg_dict)
+                    setkey(env, '#' + tag, pkg)
                     v = [v, ] if not isinstance(v, list) else v
-                    setkey(env, k[1:-1])
+                    setkey(env, tag)
                     for i, item in enumerate(v):
-                        env.update(pre_env(item, '%s#%s' % (k[1:-1], i)))
+                        env.update(pre_env(item, pkg_dict, '%s#%s' % (k[1:-1], i)))
 
                     return env
 
             setkey(env, fix)
             return env
 
-        tag_dict = {'<_>': _sdic['<_>']}
-        func_dict = {k: v for k, v in _sdic.items() if IS_FUN(k)}
+        _tag_dict = {'<_>': _sdic['<_>']}
+        _func_dict = {k: v for k, v in _sdic.items() if IS_FUN(k)}
+        _pkg_dict = {k[1:]: v for k, v in _sdic.items() if k.startswith('#')}
 
         self.mtag = mtag
         self._stack = []
-        self._env = pre_env(tag_dict)
-        self._parse = self.comp_letx(tag_dict, func_dict)
+        self._env = pre_env(_tag_dict, _pkg_dict)
+        self._parse = self.comp_letx(_tag_dict, _func_dict)
         self.base_list_mode = BY_ORDER
         assert hasattr(self._parse, '__call__'), 'comp_letx self._parse must callable.'
 
@@ -173,6 +192,7 @@ class LetxBuild(_base_log):
             elif isinstance(args, dict):
                 assert len(args) == 1, 'comp_tag tag|func dict item:%s must len==1.' % (args,)
                 _k, _v = args.items()[0]
+                _k = _k.split('#', 1)[0]
                 if IS_FUN(_k):
                     assert _k in _func_dict, 'comp_tag func dict item:%s must in fdic:%s.' % (_k, _func_dict)
                     return _fix_tag, _func_dict[_k](_v, self)
@@ -182,13 +202,16 @@ class LetxBuild(_base_log):
             else:
                 assert False, 'comp_tag item:%s not support.' % (args,)
 
-        assert isinstance(tag_dict, dict) and len(tag_dict) == 1, 'comp_letx item:%s must dict and len==1.' % (tag_dict,)
+        assert isinstance(tag_dict, dict) and len(tag_dict) == 1, 'comp_letx item:%s must dict and len==1.' % (
+            tag_dict,)
         k, v = tag_dict.items()[0]
+        k = k.split('#', 1)[0]
         assert IS_TAG(k) and '#' not in k, 'comp_letx tag dict item:%s must tag(`#` not in it).' % (k,)
-        assert isinstance(v, tuple) and len(v) == 2, 'comp_letx tag dict item:%s must tuple and len==2.' % (v,)
-        assert hasattr(v[1], '__call__'), 'comp_letx tag dict item:%s[1] must callable.' % (v,)
-        _main_tag, letx_list, pkg = k[1:-1], v[0], v[1]
-        letx_list = [letx_list, ] if not isinstance(letx_list, list) else letx_list
+        _main_tag = k[1:-1]
+        pkg = self._env.get('#' + _main_tag, DEFAULT_PKG)
+        assert hasattr(pkg, '__call__'), 'pkg for tag %s must callable.' % (_main_tag,)
+
+        letx_list = [v, ] if not isinstance(v, list) else v
         parse_func, tag_list = None, []
         for i, item in enumerate(letx_list):
             fix_tag = '%s#%s' % (_main_tag, i)
@@ -214,6 +237,46 @@ IS_REAL = lambda k, sa='<`', sb='`>': len(k) >= 4 and k[:2] == sa and k[-2:] == 
 DEFAULT_SPACE = {'\n': 1, '\r': 1, '\t': 1, ' ': 1}
 
 SUB = lambda s, index, n=5: s[index - n:index + n]
+
+
+def build_pkg_map(MAX_N=9, F_MAP=(('', lambda x: x), ('^int', int), ('^long', long), ('^float', float))):
+    base_map = {
+        '': lambda x: x,
+        'N': lambda x: None,
+        'T': lambda x: True,
+        'F': lambda x: False,
+        '{:}': lambda x: {k: v for k, v in x},
+    }
+    tpl_map = {
+        '{$t:}': lambda tag, idx, f: lambda x: {tag: x},
+        '$i~': lambda tag, idx, f: lambda x: x[idx:],
+        '~$i': lambda tag, idx, f: lambda x: x[:idx],
+        '$i^f': lambda tag, idx, f: lambda x: f(x[idx]),
+        '[$i~]': lambda tag, idx, f: lambda x: [i[idx:] for i in x],
+        '[~$i]': lambda tag, idx, f: lambda x: [i[:idx] for i in x],
+        '[$i^f]': lambda tag, idx, f: lambda x: [f(i[idx]) for i in x],
+        '{$t:$i~}': lambda tag, idx, f: lambda x: {tag: x[idx:]},
+        '{$t:~$i}': lambda tag, idx, f: lambda x: {tag: x[:idx]},
+        '{$t:$i^f}': lambda tag, idx, f: lambda x: {tag: f(x[idx])},
+        '{$t:[$i~]}': lambda tag, idx, f: lambda x: {tag: [i[idx:] for i in x]},
+        '{$t:[~$i]}': lambda tag, idx, f: lambda x: {tag: [i[:idx] for i in x]},
+        '{$t:[$i^f]}': lambda tag, idx, f: lambda x: {tag: [f(i[idx]) for i in x]},
+    }
+    ext_map = {}
+    for expr, func in tpl_map.items():
+        if '$i' in expr:
+            for n in range(0, MAX_N):
+                _expr = expr.replace('$i', str(n))
+                tmp_map = {_expr.replace('^f', v): vf for v, vf in F_MAP} if '^f' in _expr else {
+                    _expr: lambda x: x}
+                for e, vf in tmp_map.items():
+                    ext_map[e] = lambda tag, idx=n, f=vf, _func=func: _func(tag, idx, f)
+        else:
+            ext_map[expr] = lambda tag, idx=None, f=None, _func=func: _func(tag, idx, f)
+
+    for expr, func in base_map.items():
+        ext_map[expr] = lambda tag: func
+    return ext_map
 
 
 def DEFAULT_PKG(x):
@@ -299,6 +362,7 @@ def ftoken(END, PRE=None, SKIP=None):
         return index, ''.join(val)
 
     return _ftoken
+
 
 class base_list(_base):
     def __init__(self, args_tuple, letx):
@@ -535,7 +599,7 @@ class base_lines(_base):
 # ========================== TEST FUNC ==========================
 # ===============================================================
 
-def all_test(test_pre='_test3'):
+def all_test(test_pre='_test'):
     globals_dict = globals()
     for k, v in globals_dict.items():
         if k.startswith(test_pre):
@@ -749,22 +813,22 @@ def do_clean_pp(f, outf):
 # ===============================================================
 
 sdic_cl = {
-    '<_>': ([
-                {'<exe>': ("<str|token_p>", lambda x: x[0])},
-                {'<define>': (["<`/|-`>D<token_k>=<token_k>", "<`/|-`>D<token_k>"], lambda x: {'define': x[1:]})},
-                {'<include>': ("<`/|-`>I<str|token_p>", lambda x: {'include': x[1]})},
-                {'<flag>': ("<`/|-`><str|token_k>", lambda x: {'flag': x[1]})},
-                {'<zc>': ("<`/|-`>Zc:<str|token_k>", lambda x: {'zc': x[1]})},
-                {'<warn>': ("<`/|-`>w</[deo1-4]{1}/><str|token_k>", lambda x: {'warn': x[1:]})},
-                {'<file>': ("<`/|-`>F</[admpRAeori]{1}/><str|token_p>", lambda x: {'file': x[1:]})},
-                {'<arg>': ("<define|include|file|zc|warn|flag>", lambda x: x[0])},
-                {'<str>': ([fstr('"'), fstr("'")], lambda x: x)},
-                {'<token_k>': (r"</[\w]+/>", lambda x: x[0])},
-                {'<token_p>': (r"</[:.\/\w\\-]+/>", lambda x: x[0])},
-                {'<option>': ({'>s_lines<': ("<>", "<arg>")}, lambda x: {'option': [i[0] for i in x]})},
-                {'<input>': ({'>s_lines<': ("<>", "<str|token_p>")}, lambda x: {'input': [i[0] for i in x]})},
-                {'<cl>': ("<exe><option><input>", lambda x: x)}
-            ], lambda x: x),
+    '<_>': [
+        {'<exe>#0': "<str|token_p>"},
+        {'<define>#{$t:1~}': ["<`/|-`>D<token_k>=<token_k>", "<`/|-`>D<token_k>"]},
+        {'<include>#{$t:1}': "<`/|-`>I<str|token_p>"},
+        {'<file>#{$t:1~}': "<`/|-`>F</[admpRAeori]{1}/><str|token_p>"},
+        {'<zc>#{$t:1}': "<`/|-`>Zc:<str|token_k>"},
+        {'<warn>#{$t:1~}': "<`/|-`>w</[deo1-4]{1}/><str|token_k>"},
+        {'<flag>#{$t:1}': "<`/|-`><str|token_k>"},
+        {'<arg>#0': "<define|include|file|zc|warn|flag>"},
+        {'<str>': [fstr('"'), fstr("'")]},
+        {'<token_k>#0': r"</[\w]+/>"},
+        {'<token_p>#0': r"</[:.\/\w\\-]+/>"},
+        {'<option>#{$t:[0]}': {'>s_lines<': ("<>", "<arg>")}},
+        {'<input>#{$t:[0]}': {'>s_lines<': ("<>", "<str|token_p>")}},
+        {'<cl>': "<exe><option><input>"}
+    ],
     '><': base_reg,
     '>s_lines<': base_lines, }
 
@@ -786,18 +850,17 @@ def _test_clload():
 
 
 sdic_json = {
-    '<_>': ([
-                {'<str>': ([fstr('"'), fstr("'")], lambda x: x)},
-                {'<None>': ("None", lambda x: None)},
-                {'<True>': ("True", lambda x: True)},
-                {'<False>': ("False", lambda x: False)},
-                {'<num>': (r"</\d+/>", lambda x: int(x[0]))},
-                {'<list>': ({'>join<': ("[", "<_>", ",", "]")}, lambda x: [i[0] for i in x])},
-                {'<list2>': ({'>join<': ("[", "<_>", ",,", "]")}, lambda x: [i[0] for i in x])},
-                {'<dict>': ({'>join<': ("{", "<str|num|token>:<_>", ",", "}")}, lambda x: {k: v for k, v in x})},
-                {'<token>': (
-                    ftoken(END={'{', '}', '[', ']', ':', ','}, SKIP={' ', '\r', '\n', '\t'}), lambda x: x)}
-            ], lambda x: x),
+    '<_>': [
+        {'<str>': [fstr('"'), fstr("'")]},
+        {'<None>#N': "None"},
+        {'<True>#T': "True"},
+        {'<False>#F': "False"},
+        {'<num>#0^int': r"</\d+/>"},
+        {'<list>#[0]': {'>join<': ("[", "<_>", ",", "]")}},
+        {'<list2>#[0]': {'>join<': ("[", "<_>", ",,", "]")}},
+        {'<dict>#{:}': {'>join<': ("{", "<str|num|token>:<_>", ",", "}")}},
+        {'<token>': ftoken(END={'{', '}', '[', ']', ':', ','}, SKIP={' ', '\r', '\n', '\t'})}
+    ],
     '><': base_reg,
     '>join<': base_join, }
 
@@ -828,7 +891,7 @@ def _test3():
     t2 = "    [4.   5,    [    ],   {'a'   : 'b',    }   ]"
     t3 = "   ['fgh',7656,None,  True,False  ,123,   7472,[]  ,{},]  "
     _unittest(load, (True, t2))
-    #_unittest(load, (True, t0), (True, t1), (True, t2), (True, t3))
+    # _unittest(load, (True, t0), (True, t1), (True, t2), (True, t3))
 
 
 # ===============================================================
@@ -874,13 +937,13 @@ example
 """
 
 sdic_asm = {
-    '<_>': ([
-                {'<comment>': (line_str(';'), lambda x: x)},
-                {'<include>': ()},
-                {'<head>': ()},
-                {'<head>': ({'>s_lines<': ("<>", "<comment|token_p>")}, lambda x: x)},
-                {'<asm>': ('<comment><include><includelib><symbol><segment>', lambda x: x)},
-            ], lambda x: x),
+    '<_>': [
+        {'<comment>': line_str(';')},
+        {'<include>': ()},
+        {'<head>': ()},
+        {'<head>': {'>s_lines<': ("<>", "<comment|token_p>")}},
+        {'<asm>': '<comment><include><includelib><symbol><segment>'},
+    ],
     '><': base_reg,
     '>s_lines<': base_lines, }
 
