@@ -31,3 +31,7 @@ phpdev/vc15/x64/deps.*/
 phpdev/vc15/x64/*.7z
 phpdev/vc15/x64/*.zip
 phpdev/vc15/x64/*.tar
+phpdev/vc15/x64/.idea/
+phpdev/vc15/x64/*.exe
+phpdev/vc15/x64/.vscode/
+phpdev/vc15/x64/9ccgo/

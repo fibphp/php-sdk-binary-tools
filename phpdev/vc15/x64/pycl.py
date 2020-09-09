@@ -1,181 +1,205 @@
-#-*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import re
 import os
 import sys
 import json
 
+
 def read_lines(f):
     with open(f, 'r') as rf:
         return rf.readlines()
 
+
 def dump_json(f, obj):
     with open(f, 'w') as wf:
-        json.dump(obj, wf, indent = 2)
+        json.dump(obj, wf, indent=2)
+
 
 def load_json(f):
     with open(f, 'r') as rf:
         return json.load(rf)
 
+
 def _LOG(msg, handle=None):
     print msg
     if handle:
-        handle.write(msg+'\n')
+        handle.write(msg + '\n')
         handle.flush()
 
 
-#===============================================================
-#========================== LETX ERROR ==========================
-#===============================================================
+# ===============================================================
+# ========================== LETX ERROR ==========================
+# ===============================================================
 
 class Error(Exception):
     pass
+
 
 class NotMatchError(Error):
     def __init__(self, index, msg, obj=None):
         super(NotMatchError, self).__init__(msg)
         self._letx = obj
-        self._index = index
+        self.index = index
+
 
 class ListNotMatchError(NotMatchError):
     def __init__(self, index, msg, tag_list, ex_list, obj=None):
         super(ListNotMatchError, self).__init__(index, msg, obj)
         self.__dict__.update(dict(zip(tag_list, ex_list)))
-        self._index = index
-        max_item = max(ex_list, key=lambda i:i._index)
-        self._ex = {tag_list[i]:item for (i,item) in enumerate(ex_list) if item._index==max_item._index}
+        self.index = index
+        max_item = max(ex_list, key=lambda i: i.index)
+        self._ex = {tag_list[i]: item for (i, item) in enumerate(ex_list) if item.index == max_item.index}
 
     def __str__(self):
-        return '%s >> [ %s ]' % (self.message, ','.join(['<%s> :%s'%(key,item) for (key, item) in self._ex.items()]))
+        return '%s >>>>\n %s' % (
+        self.message, '\n'.join(['\t<%s> :%s' % (key, item) for (key, item) in self._ex.items()]))
 
 
-#===============================================================
-#========================== LETX MAIN ==========================
-#===============================================================
+# ===============================================================
+# ========================== LETX MAIN ==========================
+# ===============================================================
 
-def letx(_sdic, mtag = '_'):
-    def add_tag(nk, env, obj):
-        assert nk not in env or env[nk] is None, 'comp_letx add_tag:mutil tag %s in %s.' % (nk, env)
-        env[nk] = obj
+class LetxBuild(object):
 
-    def comp_letx(s, fdic, env):
-        def find_tag(tag_in, env_in=env):
-            if not tag_in:
-                def _null_parse(index_in, str_in, str_len):
-                    index = SKIP_SPACE(index_in, str_in, str_len)
-                    return index, ''
+    def __init__(self, _sdic, mtag='_'):
+        assert '<_>' in _sdic and isinstance(_sdic['<_>'], tuple) and \
+               len(_sdic['<_>']) == 2 and isinstance(_sdic['<_>'][0], list) and \
+               hasattr(_sdic['<_>'][1], '__call__'), \
+            'input:%s must as {"<_>":([...], lambda x: x)}.' % (_sdic,)
 
-                return _null_parse
+        def pre_env(s, fix=''):
+            def setkey(_env, key, val=None):
+                assert key not in _env, 'mutil tag in key:%s' % (key,)
+                _env[key] = val
 
-            tag_in = tag_in[1:] if tag_in[0] == '!' else tag_in
-            assert tag_in and tag_in in env_in, 'comp_letx find_tag:can not find(%s) in %s.' % (tag_in, env_in)
-
-            def _pkg_parse(index_in, str_in, str_len):
-                assert env_in[tag_in], 'comp_letx _pkg_parse:empty value (%s) in %s.' % (tag_in, env_in)
-                parse_func, pkg, _ = env_in[tag_in]
-                index, ret_tmp = parse_func(index_in, str_in, str_len)
-                ret = pkg(ret_tmp)
-                return index, ret
-            _pkg_parse.func_name = 'letx %s' % (tag_in, )
-            return _pkg_parse
-
-        assert isinstance(s, dict) and len(s)==1, 'comp_letx item:%s must dict and len==1.' % (s, )
-        for k, v in s.items():
-            assert IS_TAG(k) and '.' not in k, 'comp_letx tag dict item:%s must tag(`.` not in it).' % (k, )
-            assert isinstance(v, tuple) and len(v)==2, 'comp_letx tag dict item:%s must tuple and len==2.' % (v, )
-            assert hasattr(v[1], '__call__'), 'comp_letx tag dict item:%s[1] must callable.' % (v, )
-            main_tag, letx_list, pkg = k[1:-1], v[0], v[1]
-            letx_list = [letx_list,] if not isinstance(letx_list, list) else letx_list
-            tag_list = []
-            for i,item in enumerate(letx_list):
-                fix_tag = '%s.%s' % (main_tag, i)
-                tag, parse_func = comp_tag(item, fdic, fix_tag, env, find_tag)
-                if tag==fix_tag:
-                    add_tag(tag, env, (parse_func, DEFAULT_PKG, item))
-                tag_list.append(tag)
-
-            func_obj = base_list((main_tag, tag_list), find_tag)
-            add_tag(main_tag, env, (func_obj, pkg, letx_list))
-            return find_tag(mtag) if main_tag == '_' else find_tag(main_tag)
-
-    def comp_tag(s, fdic, fix_tag, env, find_tag):
-        if hasattr(s, '__call__'):
-            return fix_tag, s
-        elif isinstance(s, (str, unicode, tuple)):
-            return comp_tag({'><':s}, fdic, fix_tag, env, find_tag)
-        elif isinstance(s, dict):
-            assert len(s)==1, 'comp_tag tag|func dict item:%s must len==1.' % (s, )
-            for k,v in s.items():
-                if IS_FUN(k):
-                    assert k in fdic, 'comp_tag func dict item:%s must in fdic:%s.' % (k, fdic)
-                    return fix_tag, fdic[k](v, find_tag)
-                elif IS_TAG(k):
-                    tmp_func = comp_letx(s, fdic, env)
-                    return k[1:-1], tmp_func
-        else:
-            assert False, 'comp_tag item:%s not support.' % (s, )
-
-    def pre_env(s, fix=None):
-        def setkey(env, key, val=None):
-            if key in env:
-                raise TypeError('mutil tag in main_tag:%s' % (s, ))
-            else:
-                env[key] = val
-
-        env = {}
-        if isinstance(s, dict) and len(s)==1:
-            for k, ut in s.items():
+            env = {}
+            if isinstance(s, dict) and len(s) == 1:
+                k, ut = s.items()[0]
                 if IS_TAG(k):
-                    setkey(env, k[1:-1])
                     v, _ = ut
-                    v = [v,] if not isinstance(v, list) else v
-                    for i,t in enumerate(v):
-                        env.update(pre_env(t, '%s_%s_' % (k[1:-1], i)))
-                elif fix:
-                    setkey(env, fix)
-        elif fix:
+                    v = [v, ] if not isinstance(v, list) else v
+                    setkey(env, k[1:-1])
+                    for i, item in enumerate(v):
+                        env.update(pre_env(item, '%s#%s' % (k[1:-1], i)))
+
+                    return env
+
             setkey(env, fix)
-        return env
+            return env
 
-    assert '<_>' in _sdic and isinstance(_sdic['<_>'], tuple) and \
-            len(_sdic['<_>'])==2 and isinstance(_sdic['<_>'][0], list) and \
-            hasattr(_sdic['<_>'][1], '__call__'), \
-            'input:%s must as {"<_>":([...], lambda x: x)}.' % (_sdic, )
-    func_dict = {k:v for k,v in _sdic.items() if IS_FUN(k)}
-    main_tag = {'<_>':_sdic['<_>']}
-    env = pre_env(main_tag)
-    _self = comp_letx(main_tag, func_dict, env)
+        tag_dict = {'<_>': _sdic['<_>']}
+        func_dict = {k: v for k, v in _sdic.items() if IS_FUN(k)}
 
-    return _self
+        self.mtag = mtag
+        self._env = pre_env(tag_dict)
+        self._parse = self.comp_letx(tag_dict, func_dict)
+        assert hasattr(self._parse, '__call__'), 'comp_letx self._parse must callable.'
 
-#===============================================================
-#========================== HELP FUNC ==========================
-#===============================================================
+    def parse(self, str_in):
+        index, ret = self._parse(0, str_in, len(str_in))
+        return index, ret
 
-IS_TAG = lambda  k,sa='<',sb='>': len(k)>=2 and k[0]==sa and k[-1]==sb
-IS_FUN = lambda  k,sa='>',sb='<': len(k)>=2 and k[0]==sa and k[-1]==sb
-IS_REGEXP = lambda  k,sa='</',sb='/>': len(k)>=4 and k[:2]==sa and k[-2:]==sb
-IS_REAL = lambda  k,sa='<`',sb='`>': len(k)>=4 and k[:2]==sa and k[-2:]==sb
+    def find_tag(self, tag_in):
+        if not tag_in:
+            def _null_parse(index_in, str_in, str_len):
+                index = SKIP_SPACE(index_in, str_in, str_len)
+                return index, ''
+
+            return _null_parse
+
+        tag_in = tag_in[1:] if tag_in[0] == '!' else tag_in
+        assert tag_in in self._env, 'comp_letx find_tag:can not find(%s) in %s.' % (tag_in, self._env)
+
+        def _pkg_parse(index_in, str_in, str_len):
+            assert self._env[tag_in], 'comp_letx _pkg_parse:empty value (%s) in %s.' % (tag_in, self._env)
+            _parse_func, _pkg, _ = self._env[tag_in]
+            index, ret_tmp = _parse_func(index_in, str_in, str_len)
+            ret = _pkg(ret_tmp)
+            return index, ret
+
+        _pkg_parse.func_name = 'letx %s' % (tag_in,)
+        return _pkg_parse
+
+    def comp_letx(self, tag_dict, func_dict):
+        def add_tag(nk, env, val):
+            assert nk in env and env[nk] is None, 'comp_letx add_tag:mutil tag %s in %s.' % (nk, env)
+            env[nk] = val
+
+        def comp_tag(args, _func_dict, _fix_tag):
+            if hasattr(args, '__call__'):
+                return _fix_tag, args
+            elif isinstance(args, (str, unicode, tuple)):
+                return comp_tag({'><': args}, _func_dict, _fix_tag)
+            elif isinstance(args, dict):
+                assert len(args) == 1, 'comp_tag tag|func dict item:%s must len==1.' % (args,)
+                _k, _v = args.items()[0]
+                if IS_FUN(_k):
+                    assert _k in _func_dict, 'comp_tag func dict item:%s must in fdic:%s.' % (_k, _func_dict)
+                    return _fix_tag, _func_dict[_k](_v, self)
+                elif IS_TAG(_k):
+                    tmp_func = self.comp_letx(args, _func_dict)
+                    return _k[1:-1], tmp_func
+            else:
+                assert False, 'comp_tag item:%s not support.' % (args,)
+
+        assert isinstance(tag_dict, dict) and len(tag_dict) == 1, 'comp_letx item:%s must dict and len==1.' % (tag_dict,)
+        k, v = tag_dict.items()[0]
+        assert IS_TAG(k) and '#' not in k, 'comp_letx tag dict item:%s must tag(`#` not in it).' % (k,)
+        assert isinstance(v, tuple) and len(v) == 2, 'comp_letx tag dict item:%s must tuple and len==2.' % (v,)
+        assert hasattr(v[1], '__call__'), 'comp_letx tag dict item:%s[1] must callable.' % (v,)
+        _main_tag, letx_list, pkg = k[1:-1], v[0], v[1]
+        letx_list = [letx_list, ] if not isinstance(letx_list, list) else letx_list
+        parse_func, tag_list = None, []
+        for i, item in enumerate(letx_list):
+            fix_tag = '%s#%s' % (_main_tag, i)
+            tag, parse_func = comp_tag(item, func_dict, fix_tag)
+            if tag == fix_tag:
+                add_tag(tag, self._env, (parse_func, DEFAULT_PKG, item))
+            tag_list.append(tag)
+
+        func_obj = base_list((_main_tag, tag_list), self) if len(letx_list) > 1 else parse_func
+        add_tag(_main_tag, self._env, (func_obj, pkg, letx_list))
+        return self.find_tag(self.mtag) if _main_tag == '_' else self.find_tag(_main_tag)
+
+
+# ===============================================================
+# ========================== HELP FUNC ==========================
+# ===============================================================
+
+IS_TAG = lambda k, sa='<', sb='>': len(k) >= 2 and k[0] == sa and k[-1] == sb
+IS_FUN = lambda k, sa='>', sb='<': len(k) >= 2 and k[0] == sa and k[-1] == sb
+IS_REGEXP = lambda k, sa='</', sb='/>': len(k) >= 4 and k[:2] == sa and k[-2:] == sb
+IS_REAL = lambda k, sa='<`', sb='`>': len(k) >= 4 and k[:2] == sa and k[-2:] == sb
+
+DEFAULT_SPACE = {'\n': 1, '\r': 1, '\t': 1, ' ': 1}
+
+SUB = lambda s, index, n=5: s[index - n:index + n]
+
 
 def DEFAULT_PKG(x):
     return x
 
-def SKIP_SPACE(si, ss, sslen, B={'\n':1, '\r':1, '\t':1, ' ':1}):
-    while si<sslen and ss[si] in B:
+
+def SKIP_SPACE(si, ss, sslen, B=None):
+    if B is None:
+        B = DEFAULT_SPACE
+    while si < sslen and ss[si] in B:
         si += 1
     return si
 
+
 def _SPLIT_REG(s, sa='<', sb='>'):
-    assert isinstance(s, basestring) and s, '_SPLIT_REG:`%s` is not basestring.' % (s, )
+    assert isinstance(s, basestring) and s, '_SPLIT_REG:`%s` is not basestring.' % (s,)
     ret, ib, ia = [], 0, s.find(sa)
-    while ia>=0:
-        if ia>ib:
+    while ia >= 0:
+        if ia > ib:
             ret.append(s[ib:ia])
-        _ia, ib = ia, s.find(sb, ia)+1
-        ia = s.find(sa, ia+1)
-        assert ia<0 or ia>=ib>_ia, '_SPLIT_REG:`%s` <> not match.' % (s, )
+        _ia, ib = ia, s.find(sb, ia) + 1
+        ia = s.find(sa, ia + 1)
+        assert ia < 0 or ia >= ib > _ia, '_SPLIT_REG:`%s` <> not match.' % (s,)
         ret.append(s[_ia:ib])
-        if ia<0 and s[ib:]:
-            assert s.find(sb, ib)<0, '_SPLIT_REG:`%s` <> not match at end.' % (s, )
+        if ia < 0 and s[ib:]:
+            assert s.find(sb, ib) < 0, '_SPLIT_REG:`%s` <> not match at end.' % (s,)
             ret.append(s[ib:])
 
     if not ret:
@@ -183,16 +207,59 @@ def _SPLIT_REG(s, sa='<', sb='>'):
 
     return tuple([i.strip() for i in ret if i.strip()])
 
+
 def GBK(s):
     try:
         return s.decode('utf-8').encode('gbk')
-    except UnicodeDecodeError as ex:
+    except UnicodeDecodeError:
         return repr(s)
 
 
-#===============================================================
-#========================= MATCH FUNC ==========================
-#===============================================================
+# ===============================================================
+# ========================= MATCH FUNC ==========================
+# ===============================================================
+
+def fstr(QUOTES, ESCAPE='\\'):  ##i[si] is " or ', return index of next i[si] without \ before it
+    QUOTES = QUOTES.strip()
+
+    def _fstr(index, s, sl):
+        if s[index] != QUOTES:
+            msg = 'fstr not start s[%s:]<`...%s...`>,`%s`.' % (index, s[index], QUOTES)
+            raise NotMatchError(index, msg, _fstr)
+        _index = index + 1
+        while _index < sl and s[_index] != QUOTES:
+            _index += 2 if s[_index] == ESCAPE else 1
+        if s[_index] != QUOTES:
+            msg = 'fstr not end s[%s:]<`...%s...`>,`%s`.' % (index, s[index], QUOTES)
+            raise NotMatchError(_index, msg, _fstr)
+        return _index + 1, s[index + 1:_index]
+
+    return _fstr
+
+
+def ftoken(END, PRE=None, SKIP=None):
+    def _ftoken(index, s, sl):
+        while PRE and index < sl and s[index] in PRE:
+            index += 1
+
+        if index >= sl:
+            msg = 'out of str length %d at %d' % (sl, index)
+            raise NotMatchError(index, msg, _ftoken)
+
+        if s[index] in END:
+            msg = 'ftoken not start s[%s:]<`...%s...`>,`%s`.' % (index, SUB(s, index), s[index])
+            raise NotMatchError(index, msg, _ftoken)
+        val = []
+        while index < sl and s[index] not in END:
+            if SKIP and s[index] in SKIP:
+                pass
+            else:
+                val.append(s[index])
+            index += 1
+        return index, ''.join(val)
+
+    return _ftoken
+
 
 class _base(object):
     TestFalse = object()
@@ -203,7 +270,7 @@ class _base(object):
             index, val = self.__call__(index, s, sl)
             return index, val
         except NotMatchError as ex:
-            msg = '%s test NotMatchError:%r @%d<`...%s...`>' % (self, ex, index, s[index-5:index+5])
+            _ = '%s test NotMatchError:%r @%d<`...%s...`>' % (self, ex, index, SUB(s, index))
             return index, self.TestFalse
 
     def log(self, msg, handle=None):
@@ -211,72 +278,74 @@ class _base(object):
             _msg = msg.replace("\n", r"\n")
             print _msg
             if handle:
-                handle.write(_msg+'\n')
+                handle.write(_msg + '\n')
                 handle.flush()
 
     def __call__(self, index, s, sl):
-        assert index < sl, 'base index:%s out of max_len:%s.'% (index, sl)
+        assert index < sl, 'base index:%s out of max_len:%s.' % (index, sl)
         return None, index
 
     def __repr__(self):
         return '<%s at 0x%08x>' % (str(self), id(self))
 
     def __str__(self):
-        return 'callable letx %s:%s' % (str(self.__class__).split("'")[1].replace('__main__.', ''), getattr(self, '__tag__', 'unknown'))
+        return 'callable letx %s:%s' % (
+            str(self.__class__).split("'")[1].replace('__main__.', ''), getattr(self, '__tag__', 'unknown'))
+
 
 class base_list(_base):
-    def __init__(self, args_tuple, find_tag):
+    def __init__(self, args_tuple, letx):
         main_tag, tag_list = args_tuple
         assert main_tag and isinstance(tag_list, (tuple, list)), \
-                'base_list `%s` and `%s` must tuple or list.' % (main_tag, tag_list)
+            'base_list `%s` and `%s` must tuple or list.' % (main_tag, tag_list)
 
-        self.func_list = [find_tag(tag) for tag in tag_list]
+        self.func_list = [letx.find_tag(tag) for tag in tag_list]
         self.__tag__ = '<%s>`%s`' % (main_tag, ','.join(tag_list))
         self.main_tag, self.tag_list = main_tag, tag_list
+        self.letx = letx
 
     def __call__(self, index, s, sl):
         _, index = super(self.__class__, self).__call__(index, s, sl)
 
-        if len(self.func_list)==1:
-            index, ret = self.func_list[0](index, s, sl)
-            return index, ret
-        else:
-            ex_list = []
-            for _, func in enumerate(self.func_list):
-                try:
-                    index, ret = func(index, s, sl)
-                    return index, ret
-                except NotMatchError as ex:
-                    ex_list.append(ex)
-            msg = '%s cannot match @%s<`...%s...`>.' % (str(self), index, s[index-5:index+5])
-            raise ListNotMatchError(index, msg, self.tag_list, ex_list, self)
+        ex_list = []
+        for _, func in enumerate(self.func_list):
+            try:
+                index, ret = func(index, s, sl)
+                return index, ret
+            except NotMatchError as ex:
+                ex_list.append(ex)
+        msg = '%s cannot match @%s<`...%s...`>.' % (str(self), index, SUB(s, index))
+        raise ListNotMatchError(index, msg, self.tag_list, ex_list, self)
+
 
 class base_reg(_base):
-    def __init__(self, args_tuple_or_str, find_tag):
+    def __init__(self, args_tuple_or_str, letx):
         args_tuple = _SPLIT_REG(args_tuple_or_str) if isinstance(args_tuple_or_str, basestring) else \
-                            args_tuple_or_str
-        assert args_tuple and isinstance(args_tuple, tuple), 'base_reg `%s` must tuple.' % (args_tuple, )
+            args_tuple_or_str
+        assert args_tuple and isinstance(args_tuple, tuple), 'base_reg `%s` must tuple.' % (args_tuple,)
         for idx, item in enumerate(args_tuple):
             assert isinstance(item, (str, unicode)), 'base_reg idx %d:`%s` must str or unicode.' % (idx, item)
 
-        tag_split = lambda i:[tag for tag in i[1:-1].split('|')]
-        real_split = lambda i:[tag for tag in i[2:-2].split('|') if tag]
+        tag_split = lambda i: [tag for tag in i[1:-1].split('|')]
+        real_split = lambda i: [tag for tag in i[2:-2].split('|') if tag]
+        list_split = lambda i: base_list((i[1:-1], tag_split(i)), letx)
+
         tag_func = lambda i: \
             (re.compile(i[2:-2]), i[2:-2]) if IS_REGEXP(i) else \
-            ([real_split(i)]) if IS_REAL(i) else \
-            (base_list((i[1:-1], tag_split(i)), find_tag), i[1:-1], i[1:-1][0] == '!') if IS_TAG(i) and '|' in i else \
-            (find_tag(i[1:-1]), i[1:-1], i[1:-1] and i[1:-1][0] == '!') if IS_TAG(i) else (i,)
+                (real_split(i),) if IS_REAL(i) else \
+                    (list_split(i), i[1:-1], i[1:-1][0] == '!') if IS_TAG(i) and '|' in i else \
+                        (letx.find_tag(i[1:-1]), i[1:-1], i[1:-1] and i[1:-1][0] == '!') if IS_TAG(i) else (i,)
 
         self.__tag__ = ''.join(args_tuple)
         self.func_list = [tag_func(item) for item in args_tuple if item]
         self.args_tuple = args_tuple
+        self.letx = letx
 
     def __call__(self, index, s, sl):
         _, index = super(self.__class__, self).__call__(index, s, sl)
 
         ret = []
         for ix, item in enumerate(self.func_list):
-            tmp = None
             if len(item) == 3 and item[2]:
                 pass
             else:
@@ -286,60 +355,65 @@ class base_reg(_base):
                 break
 
             f_len = len(item)
-            if f_len==1:
-                if isinstance(item[0], (str, unicode)):
+            if f_len == 1:  ## 匹配字符串
+                if isinstance(item[0], (str, unicode)):  # 原始字符串
                     len_i, tmp_i = len(item[0]), item[0]
-                    tmp_str = s[index:index+len_i]
+                    tmp_str = s[index:index + len_i]
                     if not tmp_str == tmp_i:
-                        msg = 'base_reg str %s not math @[%s:%s]<`...%s...`>.'% (tmp_i, index, index+len_i, tmp_str)
+                        msg = 'base_reg str %s not math @[%s:%s]<`...%s...`>.' % (tmp_i, index, index + len_i, tmp_str)
                         raise NotMatchError(index, msg, self)
                     else:
                         index += len_i
-                        msg = 'base_reg str `%s@%d` >>>%s<<< match @%s<`...%s...`>.'% (GBK(str(self)), ix, GBK(tmp_str), index, GBK(s[index-5:index+5]))
+                        msg = 'base_reg str `%s@%d` >>>%s<<< match @%s<`...%s...`>.' % (
+                            GBK(str(self)), ix, GBK(tmp_str), index, GBK(SUB(s, index)))
                         self.log(msg)
-                else:
+                else:  # 捕获字符串
+                    tmp_i, len_i, tmp_str = '', 0, ''
                     for tmp_i in item[0]:
                         len_i = len(tmp_i)
-                        tmp_str = s[index:index+len_i]
+                        tmp_str = s[index:index + len_i]
                         if not tmp_str == tmp_i:
                             continue
                         else:
                             index += len_i
-                            msg = 'base_reg str `%s@%d` >>>%s<<< match @%s<`...%s...`>.'% (GBK(str(self)), ix, GBK(tmp_str), index, GBK(s[index-5:index+5]))
+                            ret.append(tmp_str)
+                            msg = 'base_reg str `%s@%d` >>>%s<<< match @%s<`...%s...`>.' % (
+                                GBK(str(self)), ix, GBK(tmp_str), index, GBK(SUB(s, index)))
                             self.log(msg)
                             break
                     else:
-                        msg = 'base_reg str %s not math @[%s:%s]<`...%s...`>.'% (tmp_i, index, index+len_i, tmp_str)
+                        msg = 'base_reg str %s not math @[%s:%s]<`...%s...`>.' % (tmp_i, index, index + len_i, tmp_str)
                         raise NotMatchError(index, msg, self)
 
-            elif f_len==2:
+            elif f_len == 2:
                 reg_tmp, reg_i = item[0].match(s[index:]), item[1]
                 tmp = reg_tmp.group() if reg_tmp else None
-                if not tmp :
-                    msg = 'base_reg reg_exp %s not math @%s<`...%s...`>.'% (reg_i, index, GBK(s[index-5:index+5]))
+                if not tmp:
+                    msg = 'base_reg reg_exp %s not math @%s<`...%s...`>.' % (reg_i, index, GBK(SUB(s, index)))
                     raise NotMatchError(index, msg, self)
                 else:
                     index += len(tmp)
                     ret.append(tmp)
-                    msg = 'base_reg reg_exp `%s@%d` >>>%s<<< match @%s<`...%s...`>.'% (GBK(str(self)), ix, tmp, index, GBK(s[index-5:index+5]))
+                    msg = 'base_reg reg_exp `%s@%d` >>>%s<<< match @%s<`...%s...`>.' % (
+                        GBK(str(self)), ix, tmp, index, GBK(SUB(s, index)))
                     self.log(msg)
-            elif f_len==3:
+            elif f_len == 3:
                 index, tmp = item[0](index, s, sl)
                 ret.append(tmp)
-                msg = 'base_reg tag `%s@%d` >>>%s<<< match @%s<`...%s...`>.'% (GBK(str(self)), ix, tmp, index, GBK(s[index-5:index+5]))
+                msg = 'base_reg tag `%s@%d` >>>%s<<< match @%s<`...%s...`>.' % (
+                    GBK(str(self)), ix, tmp, index, GBK(SUB(s, index)))
                 self.log(msg)
         return index, tuple(ret)
 
 
-
-
 class base_join(_base):
-    def __init__(self, args_tuple, find_tag):
-        assert isinstance(args_tuple, tuple) and len(args_tuple)==4, \
-                'base_join %s must tuple(start, match, split, end).' % (args_tuple, )
+    def __init__(self, args_tuple, letx):
+        assert isinstance(args_tuple, tuple) and len(args_tuple) == 4, \
+            'base_join %s must tuple(start, match, split, end).' % (args_tuple,)
 
-        self.func_tuple = [base_reg(item, find_tag) for item in args_tuple]
+        self.func_tuple = [base_reg(item, letx) for item in args_tuple]
         self.__tag__ = '%s%s%s...%s' % args_tuple
+        self.letx = letx
 
     def __call__(self, index, s, sl):
         _, index = super(self.__class__, self).__call__(index, s, sl)
@@ -347,10 +421,11 @@ class base_join(_base):
         start, match, split, end = self.func_tuple
         T = lambda x: x is self.TestFalse
         b2s = lambda t: '>>>%s<<<' % (t,) if not T(t) else 'not'
+
         def get_msg(tag, item, t):
-            msg = 'base_join %s `%s` %s math @%s<`...%s...`>.'% (tag, str(item), b2s(t), index, s[index-5:index+5])
-            self.log(msg) if not T(t) else None
-            return msg
+            _msg = 'base_join %s `%s` %s math @%s<`...%s...`>.' % (tag, str(item), b2s(t), index, SUB(s, index))
+            self.log(_msg) if not T(t) else None
+            return _msg
 
         ret = []
         index, is_start = start.test(index, s, sl)
@@ -367,7 +442,7 @@ class base_join(_base):
 
             ret.append(tmp)
             index, is_split = split.test(index, s, sl)
-            msg = get_msg('split', split, is_split)
+            get_msg('split', split, is_split)
             index, is_end = end.test(index, s, sl)
             msg = get_msg('end', end, is_end)
             if not T(is_end):
@@ -375,58 +450,20 @@ class base_join(_base):
             if T(is_split):
                 raise NotMatchError(index, msg, self)
 
-
-
         return index, tuple(ret)
 
-def fstr(QUOTES, ESCAPE = '\\'): ##i[si] is " or ', return index of next i[si] without \ before it
-    QUOTES = QUOTES.strip()
-    def _fstr(index, s, sl):
-        if s[index]!=QUOTES:
-            msg = 'fstr not start s[%s:]<`...%s...`>,`%s`.'% (index, s[index], QUOTES)
-            raise NotMatchError(index, msg, _fstr)
-        _index = index+1
-        while _index<sl and s[_index] != QUOTES:
-            _index += 2 if s[_index]==ESCAPE else 1
-        if s[_index] != QUOTES:
-            msg = 'fstr not end s[%s:]<`...%s...`>,`%s`.'% (index, s[index], QUOTES)
-            raise NotMatchError(__index, msg, _fstr)
-        return _index+1, s[index+1:_index]
-
-    return _fstr
-
-def ftoken(END, PRE = None, SKIP = None):
-    def _ftoken(index, s, sl):
-        while PRE and index < sl and s[index] in PRE:
-            index += 1
-
-        if index >= sl:
-            msg = 'out of str length %d at %d' % (sl, index)
-            raise NotMatchError(index, msg, _ftoken)
-
-        if s[index] in END:
-            msg = 'ftoken not start s[%s:]<`...%s...`>,`%s`.'% (index, s[index-5:index+5], s[index])
-            raise NotMatchError(index, msg, _ftoken)
-        val = []
-        while index < sl and s[index] not in END:
-            if SKIP and s[index] in SKIP:
-                pass
-            else:
-                val.append(s[index])
-            index += 1
-        return index, ''.join(val)
-    return _ftoken
 
 class base_lines(_base):
-    def __init__(self, args_tuple, find_tag):
-        assert isinstance(args_tuple, tuple) and (len(args_tuple)==2 or len(args_tuple)==3), \
-                'base_lines %s must tuple(start, match, [SPLIT_LINE]).' % (args_tuple, )
+    def __init__(self, args_tuple, letx):
+        assert isinstance(args_tuple, tuple) and (len(args_tuple) == 2 or len(args_tuple) == 3), \
+            'base_lines %s must tuple(start, match, [SPLIT_LINE]).' % (args_tuple,)
 
-        self.SPLIT_LINE = args_tuple[2] if len(args_tuple)==3 else True
+        self.SPLIT_LINE = args_tuple[2] if len(args_tuple) == 3 else True
 
         args_tuple = args_tuple[:2]
-        self.func_tuple = [base_reg(item, find_tag) for item in args_tuple]
+        self.func_tuple = [base_reg(item, letx) for item in args_tuple]
         self.__tag__ = '%s -> %s' % args_tuple
+        self.letx = letx
 
     def __call__(self, index, s, sl):
         _, index = super(self.__class__, self).__call__(index, s, sl)
@@ -434,10 +471,12 @@ class base_lines(_base):
         start, match = self.func_tuple
         F = lambda x: x is self.TestFalse
         b2s = lambda t: '>>>%s<<<' % (t,) if not F(t) else 'not'
+
         def get_msg(tag, item, t):
-            msg = 'base_lines %s `%s` %s math @%s<`...%s...`>.'% (tag, GBK(str(item)), b2s(t), index, GBK(s[index-5:index+5]))
-            self.log(msg) if not F(t) else None
-            return msg
+            _msg = 'base_lines %s `%s` %s math @%s<`...%s...`>.' % (
+                tag, GBK(str(item)), b2s(t), index, GBK(SUB(s, index)))
+            self.log(_msg) if not F(t) else None
+            return _msg
 
         ret = []
         index, is_start = start.test(index, s, sl)
@@ -451,10 +490,10 @@ class base_lines(_base):
         while index < sl:
             try:
                 index, tmp = match(index, s, sl)
-            except NotMatchError as ex:
+            except NotMatchError:
                 break
 
-            msg = get_msg('match', match, tmp)
+            get_msg('match', match, tmp)
             if not tmp:
                 break
 
@@ -465,9 +504,10 @@ class base_lines(_base):
 
         return index, tuple(ret)
 
-#===============================================================
-#========================== TEST FUNC ==========================
-#===============================================================
+
+# ===============================================================
+# ========================== TEST FUNC ==========================
+# ===============================================================
 
 def all_test(test_pre='_test'):
     globals_dict = globals()
@@ -477,27 +517,30 @@ def all_test(test_pre='_test'):
             if hasattr(v, '__call__'):
                 v()
 
+
 def _unittest(func, *cases):
     return [_functest(func, *case) for case in cases]
+
 
 def _functest(func, isPass, *args, **kws):
     result = None
     try:
-        _LOG('\n%s -> %s' %(isPass, func.func_name))
+        _LOG('\n%s -> %s' % (isPass, func.func_name))
         result = func(*args, **kws)
-        _LOG('=%s' %(json.dumps(result, indent = 2), ))
+        _LOG('=%s' % (json.dumps(result, indent=2),))
     except Error as ex:
-        _LOG("%s -> %s:%s" %(isPass, type(ex), ex))
+        _LOG("%s -> %s:%s" % (isPass, type(ex), ex))
         if isPass:
             raise ex
     else:
         if not isPass:
-            raise AssertionError("isPass:%s but no Exception!!!"%(isPass))
+            raise AssertionError("isPass:%s but no Exception!!!" % (isPass,))
     return result
 
-#===============================================================
-#========================== clbuild HELP ==========================
-#===============================================================
+
+# ===============================================================
+# ========================== clbuild HELP ==========================
+# ===============================================================
 
 def parse_cl(cmds):
     rets = []
@@ -514,7 +557,13 @@ def parse_cl(cmds):
 
     return rets
 
-def fix_cl(ret, LIST_KEYS = ['include', 'zc', 'flag'], MAP_KEYS = {'define': lambda df: df if len(df) == 2 else (df[0], None), 'file': lambda df: df, 'warn': lambda df: (df[1], df[0])}):
+
+def fix_cl(ret, LIST_KEYS=None, MAP_KEYS=None):
+    if MAP_KEYS is None:
+        MAP_KEYS = {'define': lambda df: df if len(df) == 2 else (df[0], None), 'file': lambda df: df,
+                    'warn': lambda df: (df[1], df[0])}
+    if LIST_KEYS is None:
+        LIST_KEYS = ['include', 'zc', 'flag']
     assert len(ret) == 3 and ret[0] == 'cl.exe', "ret len error"
     assert isinstance(ret[1], dict) and len(ret[1]) == 1 and 'option' in ret[1], "ret option error"
     assert isinstance(ret[2], dict) and len(ret[2]) == 1 and 'input' in ret[2], "ret input error"
@@ -540,19 +589,12 @@ def fix_cl(ret, LIST_KEYS = ['include', 'zc', 'flag'], MAP_KEYS = {'define': lam
 
     return obj
 
-#===============================================================
-#========================== clbuild FUNC ==========================
-#===============================================================
 
-def clbuild(test_a = 0, test_s = 0):
-    if test_a:
-        all_test()
-        return
+# ===============================================================
+# ========================== clbuild FUNC ==========================
+# ===============================================================
 
-    if test_s:
-        return
-
-    t0 = ''
+def clbuild():
     with open('nmake_cl.txt', 'r') as rf:
         t0 = rf.read()
 
@@ -566,7 +608,6 @@ def clbuild(test_a = 0, test_s = 0):
 
 def build_cllink(cmds):
     rets = []
-    lines = []
     for line in cmds.split("\n"):
         line = line.strip()
         if not line:
@@ -577,17 +618,18 @@ def build_cllink(cmds):
 
     with open(r'cllink.bat', 'w') as wf:
         wf.writelines(rets)
-    
+
+
 def build_preprocess():
     data = load_json('nmake_cl.json')
     cmds = [
         "@echo off\n"
     ]
     for item in data:
-        define = ' '.join(['/D %s' % (k, ) if v is None else '/D %s=%s' % (k, v) for k, v in item['define'].items()])
-        include = ' '.join(['/I "%s"' % (i, ) for i in item['include']])
-        zc = ' '.join(['/Zc:%s' % (i, ) for i in item['zc']])
-        flag = ' '.join(['/%s' % (i, ) for i in item['flag']]) + " /P "
+        define = ' '.join(['/D %s' % (k,) if v is None else '/D %s=%s' % (k, v) for k, v in item['define'].items()])
+        include = ' '.join(['/I "%s"' % (i,) for i in item['include']])
+        zc = ' '.join(['/Zc:%s' % (i,) for i in item['zc']])
+        flag = ' '.join(['/%s' % (i,) for i in item['flag']]) + " /P "
         for infile in item['input']:
             outfile = '/Fi:%s' % (infile + "i")
             cmd = r'cl.exe %s %s %s %s %s %s' % (define, include, zc, flag, outfile, infile)
@@ -597,26 +639,30 @@ def build_preprocess():
     with open(r'preprocess.bat', 'w') as wf:
         wf.writelines(cmds)
 
+
 def build_clbuild():
     data = load_json('nmake_cl.json')
     cmds = [
         "@echo off\n"
     ]
     for item in data:
-        define = ' '.join(['/D %s' % (k, ) if v is None else '/D %s=%s' % (k, v) for k, v in item['define'].items()])
-        include = ' '.join(['/I "%s"' % (i, ) for i in item['include']])
-        zc = ' '.join(['/Zc:%s' % (i, ) for i in item['zc']])
-        flag = ' '.join(['/%s' % (i, ) for i in item['flag']]) + " /TC /FAs"
+        define = ' '.join(['/D %s' % (k,) if v is None else '/D %s=%s' % (k, v) for k, v in item['define'].items()])
+        include = ' '.join(['/I "%s"' % (i,) for i in item['include']])
+        zc = ' '.join(['/Zc:%s' % (i,) for i in item['zc']])
+        flag = ' '.join(['/%s' % (i,) for i in item['flag']]) + " /TC /FAs"
         item['file']['a'] = item['file']['o']
         file_f = ' '.join(['/F%s%s' % (k, v) for k, v in item['file'].items()])
-        warn = ' '.join(['/w%s%s' % (v, k) for k, v in item['warn'].items()]) + " /wd4090 /wd4047 /wd4146 /wd4244 /wd4267 /wd4216 /wd4018 /wd4113 /wd4101 "
+        warn = ' '.join(['/w%s%s' % (v, k) for k, v in item[
+            'warn'].items()]) + " /wd4090 /wd4047 /wd4146 /wd4244 /wd4267 /wd4216 /wd4018 /wd4113 /wd4101 "
 
-        cmd = r'cl.exe %s %s %s %s %s %s %s' % (define, include, zc, file_f, warn, flag, ' '.join([infile + 'ipp' for infile in item['input']]))
+        cmd = r'cl.exe %s %s %s %s %s %s %s' % (
+            define, include, zc, file_f, warn, flag, ' '.join([infile + 'ipp' for infile in item['input']]))
         print cmd
         cmds.append(cmd + "\n")
 
     with open(r'clbuild.bat', 'w') as wf:
         wf.writelines(cmds)
+
 
 def clean_pp():
     data = load_json('nmake_cl.json')
@@ -627,6 +673,7 @@ def clean_pp():
             outf = f + 'pp'
             do_clean_pp(f, outf)
 
+
 def do_clean_pp(f, outf):
     lines = read_lines(f)
 
@@ -635,9 +682,8 @@ def do_clean_pp(f, outf):
     skip = False
     for line in lines:
         l = line.strip()
-        if not l: #  or l.startswith('#pragma') or l.startswith('__pragma'):
+        if not l:  # or l.startswith('#pragma') or l.startswith('__pragma'):
             continue
-
 
         if l.startswith('#line'):
             # print "\n", l
@@ -654,51 +700,52 @@ def do_clean_pp(f, outf):
             continue
 
         if skip:
-            #print 'x',
+            # print 'x',
             pass
         else:
-            #print '.',
+            # print '.',
             ret.append(l + "\n")
 
     with open(outf, 'w') as wf:
         wf.write("/* auto gen by ipp */\n")
         wf.write("\n")
         for i in include:
-            wf.write("#include <%s>\n" % (i, ))
+            wf.write("#include <%s>\n" % (i,))
 
         wf.write("\n")
         wf.writelines(ret)
 
     print "done:", outf, include
 
-#===============================================================
-#========================== CL LETX  ==========================
-#===============================================================
+
+# ===============================================================
+# ========================== CL LETX  ==========================
+# ===============================================================
 
 sdic_cl = {
-    '<_>':([
-            {'<exe>':("<str|token_p>", lambda x: x[0]) },
-            {'<define>':(["<`/|-`>D<token_k>=<token_k>", "<`/|-`>D<token_k>"], lambda x: {'define': x}) },
-            {'<include>':("<`/|-`>I<str|token_p>", lambda x: {'include': x[0]}) },
-            {'<flag>':("<`/|-`><str|token_k>", lambda x: {'flag': x[0]}) },
-            {'<zc>':("<`/|-`>Zc:<str|token_k>", lambda x: {'zc': x[0]}) },
-            {'<warn>':("<`/|-`>w</[deo1-4]{1}/><str|token_k>", lambda x: {'warn': x}) },
-            {'<file>':("<`/|-`>F</[admpRAeori]{1}/><str|token_p>", lambda x: {'file': x}) },
-            {'<arg>':("<define|include|file|zc|warn|flag>", lambda x: x[0]) },
-            {'<str>':([fstr('"'), fstr("'")], lambda x: x) },
-            {'<token_k>':(r"</[\w]+/>", lambda x: x[0])},
-            {'<token_p>':(r"</[:.\/\w\\-]+/>", lambda x: x[0])},
-            {'<option>':({'>s_lines<':("<>", "<arg>")}, lambda x: {'option': [i[0] for i in x]})},
-            {'<input>':({'>s_lines<':("<>", "<str|token_p>")}, lambda x: {'input': [i[0] for i in x]})},
-            {'<cl>':("<exe><option><input>", lambda x: x)}
-        ], lambda x: x),
-    '><':base_reg,
-    '>s_lines<':base_lines, }
+    '<_>': ([
+                {'<exe>': ("<str|token_p>", lambda x: x[0])},
+                {'<define>': (["<`/|-`>D<token_k>=<token_k>", "<`/|-`>D<token_k>"], lambda x: {'define': x[1:]})},
+                {'<include>': ("<`/|-`>I<str|token_p>", lambda x: {'include': x[1]})},
+                {'<flag>': ("<`/|-`><str|token_k>", lambda x: {'flag': x[1]})},
+                {'<zc>': ("<`/|-`>Zc:<str|token_k>", lambda x: {'zc': x[1]})},
+                {'<warn>': ("<`/|-`>w</[deo1-4]{1}/><str|token_k>", lambda x: {'warn': x[1:]})},
+                {'<file>': ("<`/|-`>F</[admpRAeori]{1}/><str|token_p>", lambda x: {'file': x[1:]})},
+                {'<arg>': ("<define|include|file|zc|warn|flag>", lambda x: x[0])},
+                {'<str>': ([fstr('"'), fstr("'")], lambda x: x)},
+                {'<token_k>': (r"</[\w]+/>", lambda x: x[0])},
+                {'<token_p>': (r"</[:.\/\w\\-]+/>", lambda x: x[0])},
+                {'<option>': ({'>s_lines<': ("<>", "<arg>")}, lambda x: {'option': [i[0] for i in x]})},
+                {'<input>': ({'>s_lines<': ("<>", "<str|token_p>")}, lambda x: {'input': [i[0] for i in x]})},
+                {'<cl>': ("<exe><option><input>", lambda x: x)}
+            ], lambda x: x),
+    '><': base_reg,
+    '>s_lines<': base_lines, }
 
-clload = lambda s: letx(sdic_cl, 'cl')(0, s, len(s))[1]
+clload = lambda s: LetxBuild(sdic_cl, 'cl').parse(s)[1]
 
 
-def __test_clload():
+def _test_clload():
     t0 = r'''
 	type ext\pcre\php_pcre.def > D:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\php7.dll.def
 	"cl.exe" /I "D:\php_sdk\phpdev\vc15\x64\deps\include" /DHAVE_OPENSSL_SSL_H=1 /D COMPILE_DL_OPENSSL /D OPENSSL_EXPORTS=1 /nologo /I . /I main /I Zend /I TSRM /I ext /D _WINDOWS /D WINDOWS=1 /D ZEND_WIN32=1 /D PHP_WIN32=1 /D WIN32 /D _MBCS /W3 /D _USE_MATH_DEFINES /FD /wd4996 /Zc:inline /Zc:__cplusplus /d2FuncCache1 /Zc:wchar_t /MP /LD /MD /W3 /Ox /D NDebug /D NDEBUG /D ZEND_WIN32_FORCE_INLINE /GF /D ZEND_DEBUG=0 /I "D:\php_sdk\phpdev\vc15\x64\deps\include" /D FD_SETSIZE=256 /FoD:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\ext\openssl\ /FpD:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\ext\openssl\ /FRD:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\ext\openssl\ /FdD:\php_sdk\phpdev\vc15\x64\php-src\x64\Release\ext\openssl\ /c ext\openssl\openssl.c ext\openssl\xp_ssl.c
@@ -711,147 +758,133 @@ def __test_clload():
 '''
     _unittest(parse_cl, (True, t0))
 
-#===============================================================
-#========================== ASM LETX  ==========================
-#===============================================================
+
+sdic_json = {
+    '<_>': ([
+                {'<str>': ([fstr('"'), fstr("'")], lambda x: x)},
+                {'<None>': ("None", lambda x: None)},
+                {'<True>': ("True", lambda x: True)},
+                {'<False>': ("False", lambda x: False)},
+                {'<num>': (r"</\d+/>", lambda x: int(x[0]))},
+                {'<list>': ({'>join<': ("[", "<_>", ",", "]")}, lambda x: [i[0] for i in x])},
+                {'<list2>': ({'>join<': ("[", "<_>", ",,", "]")}, lambda x: [i[0] for i in x])},
+                {'<dict>': ({'>join<': ("{", "<str|num|token>:<_>", ",", "}")}, lambda x: {k: v for k, v in x})},
+                {'<token>': (
+                    ftoken(END={'{', '}', '[', ']', ':', ','}, SKIP={' ', '\r', '\n', '\t'}), lambda x: x)}
+            ], lambda x: x),
+    '><': base_reg,
+    '>join<': base_join, }
+
+load = lambda s: LetxBuild(sdic_json).parse(s)[1]
+
+
+# ===========TEST==========
+
+def _test1():
+    t0 = "[34,,56]"
+    t1 = "{'test':123, [1,2,3]:'error here.'}"
+    t2 = "[45,]"
+    t3 = "['fgh',7656,None,True,False,123,7472,98,[],{},]"
+    _unittest(load, (True, t0), (False, t1), (True, t2), (True, t3))
+
+
+def _test2():
+    t0 = "{76:554}"
+    t1 = "{'a':4,'a':[],}"
+    t2 = "{}"
+    t3 = "{'fg':556,}"
+    _unittest(load, (True, t0), (True, t1), (True, t2), (True, t3))
+
+
+def _test3():
+    t0 = "[34,4,]"
+    t1 = "[ture,]"
+    t2 = "    [4.   5,    [    ],   {'a'   : 'b',    }   ]"
+    t3 = "   ['fgh',7656,None,  True,False  ,123,   7472,[]  ,{},]  "
+    _unittest(load, (True, t2))
+    _unittest(load, (True, t0), (True, t1), (True, t2), (True, t3))
+
+
+# ===============================================================
+# ========================== ASM LETX  ==========================
+# ===============================================================
+
+def line_str(PRE, ENDLINE=('\n', '\r')):  ##i[si] is PRE, return index of endline
+    PRE = PRE.strip()
+
+    def _lstr(index, s, sl):
+        if s[index] != PRE:
+            msg = 'lstr not start s[%s:]<`...%s...`>,`%s`.' % (index, s[index], PRE)
+            raise NotMatchError(index, msg, _lstr)
+
+        _index = index + 1
+        while _index < sl:
+            _index += 1
+            if s[_index] in ENDLINE:
+                return _index + 1, s[index + 1:_index]
+
+        return sl, s[index + 1:sl]
+
+    return _lstr
+
 
 README = u"""
 语法描述为
-{<tag>:([tag_item1, tag_item2,...], pkg=lambda x:...)} 依次尝试tag_item,然后pkg结果，tag_item只有一个时，可简写 {<tag>:(tag_item, pkg)}
+{<tag>:([tag_item1, tag_item2,...], lambda x:...)} 依次尝试 tag_item,然后 pkg 结果，tag_item 只有一个时，可简写 {<tag>:(tag_item, pkg)}
 example
-dict{
-    <_>: ##  main_tag为<_>, tag中不允许有`.`
-        ( [{<tag1>: (sub_tag_items, lambda x:...)}, ## 每一个tag 都为全局变量 find_tag('<tag'>') 可获取此tag的解析函数
-           {<tag2>: ({>func<:agrs}, lambda x:...)}, ## 表示调用函数`func`获取结果
-           {<tag3>: (agrs, lambda x:...)}, ## func为base_func时可以直接写参数 等同于{<tag3>: ({><:agrs}, lambda x:...)}
-           {>func<:agrs}, ## tag可以匿名(补全为上级tag_index_)，等同于{<上级tag_index_>: ({>func<:agrs}, lambda x:x)}
-           (agrs), ## 等同于 {<上级tag.index>: ({><:agrs}, lambda x:x)}
+{
+    <_>: ##  main_tag 为 <_>, tag中不允许有`#`
+        ( [{<tag1>: ([tag_item1, tag_item2,...], lambda x:...)}, ## 可以定义 tag 每一个 tag 都为 letx.find_tag('<tag>') 可获取此 tag 的解析函数
+           {<tag2>: ({>func<: agrs}, lambda x:...)}, ## 表示调用函数`func`获取结果
+           {<tag3>: (agrs, lambda x:...)}, ## func 为 base_func 时可以直接写参数 等同于{<tag3>: ({><: agrs}, lambda x:...)}
+           {>func<: agrs}, ## tag可以匿名(补全为tag#index)，等同于{<tag#index>: ({>func<:agrs}, lambda x:x)}
+           (agrs), ## 等同于 {<tag#index>: ({><: agrs}, lambda x:x)}
            callable_obj, ## callable_obj 参数为(_index当前索引, s原字符串, sl原字符串长度)的可调用对象，匹配则返回结果为 (index下一个带解析处索引,ret获取到的结果)，不匹配raise NotMatchError
             ],
           pkg lambda x:...`) ## 处理tag返回结果的函数
-    ><:base_func, ##  base_func为><
-    >func<:func, ## func 接受两个参数 (args,find_tag)；返回参数为(_index当前索引, s原字符串, sl原字符串长度)的可调用对象，匹配则返回结果为 (index下一个带解析处索引,ret获取到的结果)，不匹配raise NotMatchError
+    ><:base_func, ##  base_func 为 ><
+    >func<:func, ## func 接受两个参数 (args, letx)；返回一个 callable_obj
 }
 """
 
 sdic_asm = {
-    '<_>':([
+    '<_>': ([
+                {'<comment>': (line_str(';'), lambda x: x)},
+                {'<include>': ()},
+                {'<head>': ()},
+                {'<head>': ({'>s_lines<': ("<>", "<comment|token_p>")}, lambda x: x)},
+                {'<asm>': ('<comment><include><includelib><symbol><segment>', lambda x: x)},
+            ], lambda x: x),
+    '><': base_reg,
+    '>s_lines<': base_lines, }
 
-        ], lambda x: x),
-    '><':base_reg,
-    '>s_lines<':base_lines, }
+asmload = lambda s: LetxBuild(sdic_asm, 'asm').parse(s)[1]
 
-asmload = lambda s: letx(sdic_asm, 'asm')(0, s, len(s))[1]
 
-def parse_asm(asm_str):
-    pass
-
-def _test_asm():
+def __test_asm():
     t0 = '''
-; Listing generated by Microsoft (R) Optimizing Compiler Version 19.16.27041.0 
-
-include listing.inc
-
-INCLUDELIB MSVCRT
-INCLUDELIB OLDNAMES
-
-PUBLIC	php_strlcpy
-; Function compile flags: /Ogtpy
-; File d:\php_sdk\phpdev\vc15\x64\php-src\main\strlcpy.cipp
-_TEXT	SEGMENT
-dst$ = 8
-src$ = 16
-siz$ = 24
-php_strlcpy PROC
-
-; 50994: const char *s = src;
-
-	mov	r9, rdx
-
-; 50995: size_t n = siz;
-; 50996: if (n != 0) {
-
-	test	r8, r8
-	je	SHORT $LL4@php_strlcp
-
-; 50997: while (--n != 0) {
-
-	sub	r8, 1
-	je	SHORT $LN20@php_strlcp
-	npad	2
-$LL2@php_strlcp:
-
-; 50998: if ((*dst++ = *src++) == 0)
-
-	movzx	eax, BYTE PTR [rdx]
-	inc	rdx
-	mov	BYTE PTR [rcx], al
-	inc	rcx
-	test	al, al
-	je	SHORT $LN13@php_strlcp
-
-; 50997: while (--n != 0) {
-
-	sub	r8, 1
-	jne	SHORT $LL2@php_strlcp
-
-; 50999: break;
-; 51000: }
-; 51001: }
-; 51002: if (n == 0) {
-
-	jmp	SHORT $LN20@php_strlcp
-$LN13@php_strlcp:
-	test	r8, r8
-	jne	SHORT $LN5@php_strlcp
-$LN20@php_strlcp:
-
-; 51003: if (siz != 0)
-; 51004: *dst = '\0';
-
-	mov	BYTE PTR [rcx], 0
-	npad	1
-$LL4@php_strlcp:
-
-; 51005: while (*src++)
-
-	movzx	eax, BYTE PTR [rdx]
-	inc	rdx
-	test	al, al
-	jne	SHORT $LL4@php_strlcp
-$LN5@php_strlcp:
-
-; 51006: ;
-; 51007: }
-; 51008: return((uintptr_t)src - (uintptr_t)s - 1);
-
-	sub	rdx, r9
-	lea	rax, QWORD PTR [rdx-1]
-
-; 51009: }
-
-	ret	0
-php_strlcpy ENDP
-_TEXT	ENDS
-END
-
 '''
     _unittest(parse_asm, (True, t0))
 
 
-#===============================================================
-#========================== c2goasm FUNC ==========================
-#===============================================================
+def parse_asm(asm_str):
+    ret = asmload(asm_str)
+    return ret
 
-def c2goasm(out_dir):
+
+# ===============================================================
+# ========================== c2goasm FUNC ==========================
+# ===============================================================
+
+def c2goasm(in_dir, out_dir):
     pass
-    
 
-def main(default_cmd = 'all_test', default_in = './php-src', default_out = './go-asm'):
+
+def main(default_cmd='all_test', default_in='./php-src', default_out='./go-asm'):
     cmd = sys.argv[1] if len(sys.argv) >= 2 else default_cmd
     in_dir = sys.argv[2] if len(sys.argv) >= 3 else default_in
     out_dir = sys.argv[3] if len(sys.argv) >= 4 else default_out
-    
+
     if cmd == 'all_test':
         all_test()
     elif cmd == 'clbuild':
@@ -859,14 +892,14 @@ def main(default_cmd = 'all_test', default_in = './php-src', default_out = './go
     elif cmd == 'clean_pp':
         clean_pp()
     elif cmd == 'c2goasm':
-        c2goasm(args1)
+        c2goasm(in_dir, out_dir)
     else:
         print '''
 useage ` python pycl.py all_test | clbuild | clean_pp | c2goasm [in_dir] [out_dir]`
 
 '''
 
-        
+
 if __name__ == '__main__':
     _LOG("\n==========START===========")
     main()
