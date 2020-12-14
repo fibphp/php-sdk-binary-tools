@@ -35,3 +35,6 @@ phpdev/vc15/x64/.idea/
 phpdev/vc15/x64/*.exe
 phpdev/vc15/x64/.vscode/
 phpdev/vc15/x64/9ccgo/
+
+phpdev/vc15/x64/php-8.0-src/
+bin/php/
