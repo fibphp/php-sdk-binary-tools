@@ -75,6 +75,16 @@ class Manager
 		$tmp_dir_packs = $this->md($tmp_dir . DIRECTORY_SEPARATOR . "packs");
 		$tmp_dir_deps = $this->md($tmp_dir . DIRECTORY_SEPARATOR . "deps");
 
+        echo "\n\n======================================================= ";
+        echo "\n ALL URL: ";
+		foreach ($series_data as $item) {
+			$pkg = new Package($item, $this->series, $this->fetcher);
+            $url = $pkg->showUrl();
+            echo "\n{$url}";
+			unset($pkg);
+		}
+		echo "\n\n=================================================== \n\n";
+		
 		foreach ($series_data as $item) {
 			echo "Processing package $item", PHP_EOL;
 			$pkg = new Package($item, $this->series, $this->fetcher);

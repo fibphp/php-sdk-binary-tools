@@ -36,6 +36,11 @@ class Fetcher
 		$this->series = $series;
 	}/*}}}*/
 
+    public function buildUri($uri)
+    {
+        return "{$this->scheme}://{$this->host}:{$this->port}$uri";
+    }
+
 	/* TODO more robust implementation. */
 	/* TODO implement indicator. */
 	public function getByUri(string $uri, int $retries = 3) : string
@@ -45,6 +50,7 @@ class Fetcher
 
 retry:
 		try {
+    		echo "\n try download url: \n\t{$url}\n";
 			$ret = $this->download($url);
 		} catch (Exception $e) {
 			if ($retries > 0) {
