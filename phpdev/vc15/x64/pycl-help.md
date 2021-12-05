@@ -20,6 +20,12 @@ configure --disable-all --with-ffi --with-openssl --enable-mbstring --with-zlib 
 
 configure --disable-all --enable-cli --enable-zts
 
+configure --disable-all --enable-cli --enable-opcache --enable-zts --enable-debug --enable-phpdbg --enable-vld --with-all-shared
+
+configure --disable-all --enable-cli --enable-opcache --enable-vld --with-all-shared
+
+php -dvld.active=1 -dvld.execute=0 -dvld.dump_json=1 -dvld.format main.php
+
 nmake clean
 
 nmake
