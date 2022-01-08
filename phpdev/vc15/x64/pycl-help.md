@@ -29,6 +29,12 @@ configure --disable-all --enable-cli --enable-debug --enable-phpdbg --with-xdebu
 
 php -dvld.active=1 -dvld.execute=0 -dvld.dump_json=1 -dvld.format main.php
 
+configure --enable-debug --disable-all --enable-cli --enable-opcache
+
+## release lib 
+
+configure --disable-zts --disable-all --enable-cli --enable-opcache
+
 nmake clean
 
 nmake
@@ -37,11 +43,11 @@ nmake clean
 
 nmake /N > nmake_cl.txt
 
-python ..\\pycl.py clbuild
+python2 ..\\pycl.py clbuild
 
 preprocess.bat
 
-python ..\\pycl.py clean_pp
+python2 ..\\pycl.py clean_pp
 
 nmake clean
 
