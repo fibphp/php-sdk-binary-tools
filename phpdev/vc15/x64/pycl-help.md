@@ -29,7 +29,7 @@ configure --disable-all --enable-cli --enable-debug --enable-phpdbg --with-xdebu
 
 php -dvld.active=1 -dvld.execute=0 -dvld.dump_json=1 -dvld.format main.php
 
-configure --enable-debug --disable-all --enable-cli --enable-opcache
+configure --disable-zts --enable-debug --disable-all --enable-cli --enable-opcache
 
 ## release lib 
 
