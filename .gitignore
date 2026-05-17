@@ -57,3 +57,5 @@ phpdev/vs16/x64/php8_all.lib
 /phpdev/php-8.5.4-Win32-vs17-x64
 /phpdev/php-8.5.4
 /phpdev/vs17/x64/php-src
+/phpdev/vs17/x64/deps
+/.idea
