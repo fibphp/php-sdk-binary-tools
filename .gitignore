@@ -59,3 +59,8 @@ phpdev/vs16/x64/php8_all.lib
 /phpdev/vs17/x64/php-src
 /phpdev/vs17/x64/deps
 /.idea
+/msys2/usr/bin/custom_build_rules
+/msys2/usr/bin/data
+msys2/usr/bin/README.md
+msys2/usr/bin/changelog.md
+msys2/usr/bin/FlexLexer.h
