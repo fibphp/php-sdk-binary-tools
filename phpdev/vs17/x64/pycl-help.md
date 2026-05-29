@@ -13,8 +13,26 @@
 - configure --disable-all --enable-cli --disable-zts --enable-debug --disable-opcache-jit --disable-filter
 - 
 - configure --disable-all --enable-cli --disable-zts --disable-debug --disable-opcache-jit --disable-filter
-- 
+
+
+
 - nmake
+
+```sh
+
+
+configure --enable-embed --enable-zts --with-ffi --with-openssl --disable-debug --disable-opcache-jit --disable-filter --disable-com-dotnet --without-gd --disable-zip
+
+
+| com_dotnet | shared |
+| gd         | shared |
+| openssl    | shared |
+| zip        | shared |
+-----------------------
+
+```
+
+
 
 # 编译参数
 
